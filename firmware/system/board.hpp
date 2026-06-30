@@ -22,7 +22,7 @@ namespace kern::board {
 
 	enum class AdcChannel : uint32_t {
 		Pot = ADC_CHANNEL_5,
-				Photodiode = ADC_CHANNEL_6,
-				Lm35 = ADC_CHANNEL_9,
+		Photodiode = ADC_CHANNEL_6,
+		Lm35 = ADC_CHANNEL_9,
 	};
 }
