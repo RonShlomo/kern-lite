@@ -1,15 +1,24 @@
-/*
- * codec.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef CODEC_HPP_
-#define CODEC_HPP_
+#include "frame.hpp"
 
+namespace kern::protocol {
+	enum class DecodeResult {
+		NeedMore,
+		FrameReady,
+		CrcError,
+		SyncError
+	};
 
+	size_t encode(const Frame& f, uint8_t* outBuf, size_t outSize);
 
+	class Decoder {
+	public:
+		DecodeResult feed(uint8_t byte);
+		const Frame& frame() const { return m_frame; }
+		void reset();
 
-
-#endif /* CODEC_HPP_ */
+	private:
+		Frame m_frame{};
+	};
+}

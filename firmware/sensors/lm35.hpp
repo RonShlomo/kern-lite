@@ -1,15 +1,13 @@
-/*
- * lm35.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef LM35_HPP_
-#define LM35_HPP_
+namespace kern::sensors {
+	class Lm35 {
+		public:
+		void init() {}
 
-
-
-
-
-#endif /* LM35_HPP_ */
+		float readCelsius()
+		{
+			return 0.0f;
+		}
+	};
+}

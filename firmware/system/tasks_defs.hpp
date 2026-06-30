@@ -1,15 +1,15 @@
-/*
- * tasks_defs.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef TASKS_DEFS_HPP_
-#define TASKS_DEFS_HPP_
+#include "FreeRTOS.h"
+#include "task.h"
 
-
-
-
-
-#endif /* TASKS_DEFS_HPP_ */
+namespace kern::tasks {
+	inline constexpr uint32_t kSensorStack = 512;
+	inline constexpr uint32_t kStorageStack = 768;
+	inline constexpr uint32_t kCommsStack = 384;
+	inline constexpr uint32_t kSystemStack = 384;
+	inline constexpr UBaseType_t kSensorPrio = tskIDLE_PRIORITY + 2;
+	inline constexpr UBaseType_t kStoragePrio = tskIDLE_PRIORITY + 2;
+	inline constexpr UBaseType_t kCommsPrio = tskIDLE_PRIORITY + 3;
+	inline constexpr UBaseType_t kSystemPrio = tskIDLE_PRIORITY + 1;
+}

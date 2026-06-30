@@ -1,15 +1,3 @@
-/*
- * tasks.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef TASKS_HPP_
-#define TASKS_HPP_
-
-
-
-
-
-#endif /* TASKS_HPP_ */
+void kern_create_tasks();

@@ -1,15 +1,21 @@
-/*
- * comm_link.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef COMM_LINK_HPP_
-#define COMM_LINK_HPP_
+#include "../protocol/frame.hpp"
 
+namespace kern::recorder {
+	class CommLink {
+	public:
+		void init() {}
 
+		bool poll(protocol::Frame& out)
+		{
+			(void)out;
+			return false;
+		}
 
-
-
-#endif /* COMM_LINK_HPP_ */
+		void send(const protocol::Frame& f)
+		{
+			(void)f;
+		}
+	};
+}

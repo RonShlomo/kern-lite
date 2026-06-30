@@ -1,15 +1,19 @@
-/*
- * buttons.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef BUTTONS_HPP_
-#define BUTTONS_HPP_
+namespace kern::sensors {
+	enum class PressType {
+		None,
+		Short,
+		Long };
 
+	class Buttons {
+	public:
 
+		void init() {}
 
-
-
-#endif /* BUTTONS_HPP_ */
+		PressType pollSw1()
+		{
+			return PressType::None;
+		}
+	};
+}

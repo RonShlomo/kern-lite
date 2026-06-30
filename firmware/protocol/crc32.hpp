@@ -1,15 +1,11 @@
-/*
- * threshold_detector.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef CRC32_HPP_
-#define CRC32_HPP_
+#include <cstdint>
+#include <cstddef>
 
-
-
-
-
-#endif /* CRC32_HPP_ */
+namespace kern::protocol {
+	uint32_t crc32(const uint8_t* data, size_t len);
+	uint32_t crc32Begin();
+	uint32_t crc32Update(uint32_t crc, const uint8_t* data, size_t len);
+	uint32_t crc32Finalize(uint32_t crc);
+}

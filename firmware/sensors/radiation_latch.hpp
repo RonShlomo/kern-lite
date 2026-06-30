@@ -1,15 +1,14 @@
-/*
- * radiation_latch.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef RADIATION_LATCH_HPP_
-#define RADIATION_LATCH_HPP_
+namespace kern::sensors {
+	class RadiationLatch {
+		public:
 
-
-
-
-
-#endif /* RADIATION_LATCH_HPP_ */
+		void init() {}
+		void isr() {}
+		bool consumeEvent()
+		{
+			return false;
+		}
+	};
+}

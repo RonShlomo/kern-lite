@@ -1,10 +1,9 @@
-/*
- * watchdog.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
+#include "stm32l4xx_hal.h"
 
-
-
+namespace kern::hal::watchdog {
+	inline void kick(IWDG_HandleTypeDef& h) {
+		HAL_IWDG_Refresh(&h);
+	}
+}

@@ -49,11 +49,16 @@
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
-
+extern void kern_boot(void);
 /* USER CODE END FunctionPrototypes */
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
-
+      void MX_FREERTOS_Init(void)
+{
+  /* USER CODE BEGIN RTOS_THREADS */
+  kern_boot();
+  /* USER CODE END RTOS_THREADS */
+}
 /* USER CODE END Application */
 

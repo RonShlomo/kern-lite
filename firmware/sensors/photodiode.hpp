@@ -1,15 +1,13 @@
-/*
- * photodiode.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef PHOTODIODE_HPP_
-#define PHOTODIODE_HPP_
+namespace kern::sensors {
+	class Potentiometer {
+		public:
+		void init() {}
 
-
-
-
-
-#endif /* PHOTODIODE_HPP_ */
+		float readIntensity()
+		{
+			return 0.0f;
+		}
+	};
+}

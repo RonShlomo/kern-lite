@@ -1,15 +1,13 @@
-/*
- * potentiometer.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef POTENTIOMETER_HPP_
-#define POTENTIOMETER_HPP_
+namespace kern::sensors {
+	class Potentiometer {
+		public:
+		void init() {}
 
-
-
-
-
-#endif /* POTENTIOMETER_HPP_ */
+		float readPercent()
+		{
+			return 0.0f;
+		}
+	};
+}

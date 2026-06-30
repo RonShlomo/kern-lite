@@ -1,15 +1,30 @@
-/*
- * orchestrator.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef ORCHESTRATOR_HPP_
-#define ORCHESTRATOR_HPP_
+#include "../recorder/state_machine.hpp"
+#include "../recorder/sensor_bus.hpp"
+#include "../storage/circular_log.hpp"
+#include "../recorder/comm_link.hpp"
+#include "../recorder/command_handler.hpp"
 
+namespace kern::system {
+	class Orchestrator {
+	public:
+		void init();
+		void runSensorTask();
+		void runStorageTask();
+		void runCommsTask();
+		void runSystemTask();
+		static Orchestrator& instance()
+		{
+			static Orchestrator o;
+			return o;
+		}
 
-
-
-
-#endif /* ORCHESTRATOR_HPP_ */
+	private:
+		recorder::StateMachine sm;
+		recorder::SensorBus bus;
+		storage::CircularLog box;
+		recorder::CommLink link;
+		recorder::CommandHandler handler;
+	};
+}

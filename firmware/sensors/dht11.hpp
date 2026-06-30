@@ -1,15 +1,22 @@
-/*
- * dht11.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef DHT11_HPP_
-#define DHT11_HPP_
+namespace kern::sensors {
+	class Dht11 {
+	public:
+		enum class Status {
+			Ok,
+			Timeout,
+			CrcError
+		};
 
+		void init() {}
 
+		Status read(float& tempC, float& humidity)
+		{
+			tempC=0;
+			humidity=0;
 
-
-
-#endif /* DHT11_HPP_ */
+			return Status::Timeout;
+		}
+	};
+}

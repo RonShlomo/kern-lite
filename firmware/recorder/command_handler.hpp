@@ -1,15 +1,15 @@
-/*
- * command_handler.hpp
- *
- *  Created on: 30 jun 2026
- *      Author: User
- */
+#pragma once
 
-#ifndef COMMAND_HANDLER_HPP_
-#define COMMAND_HANDLER_HPP_
+#include "../protocol/frame.hpp"
 
+namespace kern::recorder {
+	class CommandHandler {
+	public:
+		void dispatch(const protocol::Frame& f)
+		{
+			(void)f;
+		}
 
-
-
-
-#endif /* COMMAND_HANDLER_HPP_ */
+		void sendStatus() {}
+	};
+}
