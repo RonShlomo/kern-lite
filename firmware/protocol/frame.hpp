@@ -11,14 +11,14 @@ namespace kern::protocol {
 
 	enum class FrameType : uint8_t {
 		CmdStart = 0x01,
-				CmdStop = 0x02,
-				CmdStatus = 0x03,
-				CmdReplay = 0x04,
-				CmdErase = 0x06,
-				Status = 0x10,
-				Record = 0x11,
-				Ack = 0x20,
-				Nack = 0x21,
+		CmdStop = 0x02,
+		CmdStatus = 0x03,
+		CmdReplay = 0x04,
+		CmdErase = 0x06,
+		Status = 0x10,
+		Record = 0x11,
+		Ack = 0x20,
+		Nack = 0x21,
 	};
 
 	enum class NackCode : uint8_t {
