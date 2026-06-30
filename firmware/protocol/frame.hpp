@@ -23,10 +23,10 @@ namespace kern::protocol {
 
 	enum class NackCode : uint8_t {
 		BadCommand = 1,
-				InvalidState = 2,
-				BadLength = 3,
-				BadMagic = 4,
-				StorageError = 5,
+		InvalidState = 2,
+		BadLength = 3,
+		BadMagic = 4,
+		StorageError = 5,
 	};
 
 	struct Frame {
