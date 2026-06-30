@@ -5,8 +5,8 @@
 namespace kern::recorder {
 	enum class State : uint8_t {
 		Idle=0,
-				Recording=1,
-				Fault=2
+		Recording=1,
+		Fault=2
 	};
 
 	enum class Event : uint8_t {
