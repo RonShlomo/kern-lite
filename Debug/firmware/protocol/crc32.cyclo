@@ -1,0 +1,4 @@
+../firmware/protocol/crc32.cpp:4:11:uint32_t kern::protocol::crc32(const uint8_t*, size_t)	1
+../firmware/protocol/crc32.cpp:9:11:uint32_t kern::protocol::crc32Begin()	1
+../firmware/protocol/crc32.cpp:14:11:uint32_t kern::protocol::crc32Update(uint32_t, const uint8_t*, size_t)	1
+../firmware/protocol/crc32.cpp:19:11:uint32_t kern::protocol::crc32Finalize(uint32_t)	1

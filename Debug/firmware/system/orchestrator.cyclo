@@ -1,0 +1,9 @@
+../firmware/system/../recorder/sensor_bus.hpp:10:8:void kern::recorder::SensorBus::init()	1
+../firmware/system/../hal/gpio.hpp:6:18:uint16_t kern::hal::gpio::mask(kern::board::Pin)	1
+../firmware/system/../hal/gpio.hpp:21:14:void kern::hal::gpio::toggle(kern::board::Pin)	1
+../firmware/system/../hal/watchdog.hpp:6:14:void kern::hal::watchdog::kick(IWDG_HandleTypeDef&)	1
+../firmware/system/orchestrator.cpp:13:7:void kern::system::Orchestrator::init()	1
+../firmware/system/orchestrator.cpp:18:7:void kern::system::Orchestrator::runSensorTask()	1
+../firmware/system/orchestrator.cpp:24:7:void kern::system::Orchestrator::runStorageTask()	1
+../firmware/system/orchestrator.cpp:29:7:void kern::system::Orchestrator::runCommsTask()	1
+../firmware/system/orchestrator.cpp:34:7:void kern::system::Orchestrator::runSystemTask()	1

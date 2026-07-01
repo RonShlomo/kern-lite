@@ -1,0 +1,3 @@
+../firmware/protocol/codec.cpp:4:9:size_t kern::protocol::encode(const Frame&, uint8_t*, size_t)	1
+../firmware/protocol/codec.cpp:9:15:kern::protocol::DecodeResult kern::protocol::Decoder::feed(uint8_t)	1
+../firmware/protocol/codec.cpp:14:7:void kern::protocol::Decoder::reset()	1

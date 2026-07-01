@@ -1,0 +1,4 @@
+../firmware/storage/circular_log.cpp:4:16:kern::storage::StorageStatus kern::storage::CircularLog::mount()	1
+../firmware/storage/circular_log.cpp:9:16:kern::storage::StorageStatus kern::storage::CircularLog::writeRecord(const kern::storage::SensorRecord&)	1
+../firmware/storage/circular_log.cpp:14:16:kern::storage::StorageStatus kern::storage::CircularLog::replayNewest(uint32_t, kern::storage::RecordCb, void*)	1
+../firmware/storage/circular_log.cpp:19:16:kern::storage::StorageStatus kern::storage::CircularLog::eraseAll(uint32_t)	1

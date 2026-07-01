@@ -1,0 +1,8 @@
+../firmware/system/orchestrator.hpp:17:24:static kern::system::Orchestrator& kern::system::Orchestrator::instance()	1
+../firmware/system/tasks.cpp:15:13:void sensorTask(void*)	1
+../firmware/system/tasks.cpp:20:13:void storageTask(void*)	1
+../firmware/system/tasks.cpp:25:13:void commsTask(void*)	1
+../firmware/system/tasks.cpp:30:13:void systemTask(void*)	1
+../firmware/system/tasks.cpp:35:6:void kern_create_tasks()	1
+../firmware/system/tasks.cpp:52:6:void vApplicationGetIdleTaskMemory(StaticTask_t**, StackType_t**, uint32_t*)	1
+../firmware/system/tasks.cpp:58:6:void vApplicationGetTimerTaskMemory(StaticTask_t**, StackType_t**, uint32_t*)	1
