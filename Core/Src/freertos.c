@@ -54,7 +54,7 @@ extern void kern_boot(void);
 
 /* Private application code --------------------------------------------------*/
 /* USER CODE BEGIN Application */
-      void MX_FREERTOS_Init(void)
+void MX_FREERTOS_Init(void)
 {
   /* USER CODE BEGIN RTOS_THREADS */
   kern_boot();

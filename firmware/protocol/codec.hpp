@@ -20,5 +20,24 @@ namespace kern::protocol {
 
 	private:
 		Frame m_frame{};
+
+		enum class State {
+			WaitStx,
+			Type,
+			LenLo,
+			LenHi,
+			Payload,
+			Crc0,
+			Crc1,
+			Crc2,
+			Crc3,
+			WaitEtx
+		};
+
+		State m_state = State::WaitStx;
+
+		uint16_t m_payloadIndex = 0;
+		uint32_t m_receivedCrc = 0;
+		uint32_t m_accumulatedCrc = 0;
 	};
 }
