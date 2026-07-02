@@ -1,11 +1,14 @@
 #include "crc32.hpp"
-#include <array>
 
 namespace {
 
 	constexpr uint32_t kPolynomial = 0xEDB88320u;
 	constexpr uint32_t kInitialValue = 0xFFFFFFFFu;
 	constexpr uint32_t kFinalXor = 0xFFFFFFFFu;
+
+	struct CrcTable {
+		uint32_t values[256]{};
+	};
 
 	constexpr uint32_t makeTableEntry(uint32_t value)
 	{
@@ -22,19 +25,20 @@ namespace {
 		return crc;
 	}
 
-	constexpr std::array<uint32_t, 256> makeTable()
+	constexpr CrcTable makeTable()
 	{
-		std::array<uint32_t, 256> table{};
+		CrcTable table{};
 
-		for (std::size_t i = 0; i < table.size(); ++i) {
-			table[i] = makeTableEntry(static_cast<uint32_t>(i));
+		for (uint32_t i = 0; i < 256u; ++i) {
+			table.values[i] = makeTableEntry(i);
 		}
 
 		return table;
 	}
 
-	constexpr auto kTable = makeTable();
-}
+	constexpr CrcTable kTable = makeTable();
+
+} // namespace
 
 namespace kern::protocol {
 
@@ -47,8 +51,9 @@ namespace kern::protocol {
 	{
 		for (size_t i = 0; i < len; ++i) {
 			const uint8_t index = static_cast<uint8_t>((crc ^ data[i]) & 0xFFu);
-			crc = (crc >> 8u) ^ kTable[index];
+			crc = (crc >> 8u) ^ kTable.values[index];
 		}
+
 		return crc;
 	}
 
@@ -63,4 +68,5 @@ namespace kern::protocol {
 		crc = crc32Update(crc, data, len);
 		return crc32Finalize(crc);
 	}
-}
+
+} // namespace kern::protocol
