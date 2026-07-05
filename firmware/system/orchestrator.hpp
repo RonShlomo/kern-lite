@@ -9,6 +9,7 @@
 namespace kern::system {
 	class Orchestrator {
 	public:
+		Orchestrator();
 		void init();
 		void runSensorTask();
 		void runStorageTask();

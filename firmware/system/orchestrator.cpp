@@ -10,6 +10,12 @@ extern UART_HandleTypeDef huart2;
 extern IWDG_HandleTypeDef hiwdg;
 
 namespace kern::system {
+
+	Orchestrator::Orchestrator()
+		: link(&huart2)
+	{
+	}
+
 	void Orchestrator::init()
 	{
 		bus.init();
