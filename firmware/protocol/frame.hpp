@@ -4,10 +4,10 @@
 #include <cstddef>
 
 namespace kern::protocol {
-	inline constexpr uint8_t kStx = 0xAB;
-	inline constexpr uint8_t kEtx = 0xCD;
-	inline constexpr size_t kMaxPayload = 256;
-	inline constexpr size_t kFrameOverhead = 8;
+	constexpr uint8_t kStx = 0xAB;
+	constexpr uint8_t kEtx = 0xCD;
+	constexpr size_t kMaxPayload = 256;
+	constexpr size_t kFrameOverhead = 9;
 
 	enum class FrameType : uint8_t {
 		CmdStart = 0x01,
@@ -15,18 +15,18 @@ namespace kern::protocol {
 		CmdStatus = 0x03,
 		CmdReplay = 0x04,
 		CmdErase = 0x06,
-		Status = 0x10,
-		Record = 0x11,
+		Status = 0x12,
+		Record = 0x10,
 		Ack = 0x20,
 		Nack = 0x21,
 	};
 
 	enum class NackCode : uint8_t {
-		BadCommand = 1,
-		InvalidState = 2,
-		BadLength = 3,
-		BadMagic = 4,
-		StorageError = 5,
+	    CrcError     = 0x01,
+	    BadCommand   = 0x02,
+	    InvalidState = 0x03,
+	    StorageError = 0x04,
+	    BadMagic     = 0x06,
 	};
 
 	struct Frame {
