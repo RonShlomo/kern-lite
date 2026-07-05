@@ -13,6 +13,8 @@ namespace kern::system {
 	void Orchestrator::init()
 	{
 		bus.init();
+		link.init();
+		handler.init(&link);
 	}
 
 	void Orchestrator::runSensorTask()
@@ -28,14 +30,20 @@ namespace kern::system {
 
 	void Orchestrator::runCommsTask()
 	{
-		for (;;) vTaskDelay(pdMS_TO_TICKS(10));
+		for (;;) {
+			kern::protocol::Frame f{};
+
+			if (link.poll(f)) {
+				handler.dispatch(f);
+			}
+
+			vTaskDelay(pdMS_TO_TICKS(10));
+		}
 	}
 
 	void Orchestrator::runSystemTask() {
-		static const char msg[] = "KERN-LITE ALIVE\r\n";
 		for (;;) {
 			hal::gpio::toggle(board::LED1_BLUE);
-			HAL_UART_Transmit(&huart2, reinterpret_cast<const uint8_t*>(msg), sizeof(msg)-1, 100);
 			hal::watchdog::kick(hiwdg);
 			vTaskDelay(pdMS_TO_TICKS(1000));
 		}
