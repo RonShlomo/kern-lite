@@ -4,12 +4,17 @@
 #include "board.hpp"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "../sensors/lm35.hpp"
+#include "../hal/adc.hpp"
 #include <cstring>
 
 extern UART_HandleTypeDef huart2;
 extern IWDG_HandleTypeDef hiwdg;
 
 namespace kern::system {
+	volatile uint16_t debugLm35Raw = 0;
+	volatile float debugLm35Volts = 0.0f;
+	volatile float debugLm35TempC = 0.0f;
 
 	Orchestrator::Orchestrator()
 		: link(&huart2)
@@ -25,8 +30,8 @@ namespace kern::system {
 
 	void Orchestrator::runSensorTask()
 	{
-		for (;;)
-			vTaskDelay(pdMS_TO_TICKS(100));
+
+		for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
 	}
 
 	void Orchestrator::runStorageTask()
@@ -54,4 +59,7 @@ namespace kern::system {
 			vTaskDelay(pdMS_TO_TICKS(1000));
 		}
 	}
+
+
+
 }

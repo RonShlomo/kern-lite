@@ -1,14 +1,21 @@
 #pragma once
 
-namespace kern::sensors {
-	class RadiationLatch {
-		public:
+#include "FreeRTOS.h"
+#include "semphr.h"
+#include <cstdint>
 
-		void init() {}
-		void isr() {}
-		bool consumeEvent()
-		{
-			return false;
-		}
-	};
+namespace kern::sensors {
+
+class RadiationLatch {
+public:
+    void init();
+    void isr();
+    bool consumeEvent();
+
+private:
+    StaticSemaphore_t m_semStorage{};
+    SemaphoreHandle_t m_sem = nullptr;
+    volatile uint32_t m_count = 0;
+};
+
 }
