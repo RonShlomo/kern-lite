@@ -79,15 +79,17 @@ namespace kern::system {
 
 	void Orchestrator::runCommsTask()
 	{
-		for (;;) {
-			kern::protocol::Frame f{};
+	    for (;;) {
+	        kern::protocol::Frame f{};
 
-			if (link.poll(f)) {
-				handler.dispatch(f);
-			}
+	        if (link.receive(f, pdMS_TO_TICKS(10))) {
+	            handler.dispatch(f);
 
-			vTaskDelay(pdMS_TO_TICKS(10));
-		}
+	            while (link.poll(f)) {
+	                handler.dispatch(f);
+	            }
+	        }
+	    }
 	}
 
 	void Orchestrator::runSystemTask() {

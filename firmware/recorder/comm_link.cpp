@@ -14,38 +14,54 @@ namespace kern::recorder {
 		g_commLink = this;
 
 		m_txMutex = xSemaphoreCreateMutexStatic(&m_txMutexBuffer);
+
+		m_rxQueue = xQueueCreateStatic(
+		    kRxQueueLength,
+		    sizeof(protocol::Frame),
+		    m_rxQueueStorage,
+		    &m_rxQueueControl
+		);
+
 		HAL_UART_Receive_IT(m_uart, &m_rxByte, 1);
 	}
 
 	void CommLink::feed(uint8_t byte)
 	{
-		// runs inside the ISR, has to be fast and non blocking
-		protocol::DecodeResult result = m_decoder.feed(byte);
+	    BaseType_t higherPriorityTaskWoken = pdFALSE;
+	    feedFromISR(byte, &higherPriorityTaskWoken);
+	}
 
-		if (result == protocol::DecodeResult::FrameReady) {
-			m_pending = m_decoder.frame();
-			m_frameReady = true;
-		}
+	void CommLink::feedFromISR(uint8_t byte, BaseType_t* higherPriorityTaskWoken)
+	{
+	    protocol::DecodeResult result = m_decoder.feed(byte);
+
+	    if (result == protocol::DecodeResult::FrameReady) {
+	        protocol::Frame ready = m_decoder.frame();
+
+	        if (m_rxQueue != nullptr) {
+	            if (xQueueSendFromISR(m_rxQueue, &ready, higherPriorityTaskWoken) != pdTRUE) {
+	                ++m_rxDropped;
+	            }
+	        }
+	    }
 	}
 
 	bool CommLink::poll(protocol::Frame& out)
 	{
-		bool hasFrame = false;
+	    if (m_rxQueue == nullptr) {
+	        return false;
+	    }
 
-		// disable hardware interrupts temporarily (begin atomic section)
-		// so the UART ISR cannot overwrite m_pending while we are copying it.
-		taskENTER_CRITICAL();
+	    return xQueueReceive(m_rxQueue, &out, 0) == pdTRUE;
+	}
 
-		if (m_frameReady) {
-			out = m_pending;
-			m_frameReady = false;
-			hasFrame = true;
-		}
+	bool CommLink::receive(protocol::Frame& out, TickType_t timeoutTicks)
+	{
+	    if (m_rxQueue == nullptr) {
+	        return false;
+	    }
 
-		// enable hardware interrupts (end atomic section)
-		taskEXIT_CRITICAL();
-
-		return hasFrame;
+	    return xQueueReceive(m_rxQueue, &out, timeoutTicks) == pdTRUE;
 	}
 
 	void CommLink::send(const protocol::Frame& f)
@@ -70,10 +86,13 @@ namespace kern::recorder {
 
 	void CommLink::handleRxISR()
 	{
-		feed(m_rxByte);
+	    BaseType_t higherPriorityTaskWoken = pdFALSE;
 
-		// Crucial: Arm the UART to listen for the next byte so the UART will not go deaf after 1 byte.
-		HAL_UART_Receive_IT(m_uart, &m_rxByte, 1);
+	    feedFromISR(m_rxByte, &higherPriorityTaskWoken);
+
+	    HAL_UART_Receive_IT(m_uart, &m_rxByte, 1);
+
+	    portYIELD_FROM_ISR(higherPriorityTaskWoken);
 	}
 
 } // end namespace kern::recorder
@@ -81,11 +100,10 @@ namespace kern::recorder {
 // Hardware Interrupt Callback (C-linkage)
 // Overrides the HAL's weak C-callback to bridge hardware interrupts into our C++ environment.
 // It routes the newly received UART byte directly into the global CommLink instance.
+
 extern "C" void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart)
 {
-    // Check if the global pointer is set and if the interrupt is from our specific UART
-    if (g_commLink != nullptr) {
-        // Route the interrupt into our C++ object
+    if (huart->Instance == USART2 && g_commLink != nullptr) {
         g_commLink->handleRxISR();
     }
 }
