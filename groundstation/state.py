@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, NamedTuple
 
 try:
     from .frame import Frame, FrameType
@@ -21,8 +21,12 @@ CMD_REPLAY = 0x04
 CMD_ERASE = 0x06
 
 
-TransitionEntry = tuple[float, int, str, str, float]
-
+class TransitionEntry(NamedTuple):
+    wall_time: float
+    session_seq: int
+    from_state: str
+    to_state: str
+    duration_in_prev: float
 
 @dataclass
 class DeviceStateModel:
@@ -78,13 +82,13 @@ class DeviceStateModel:
         self.previous_state = old_state
         self.current_state = new_state
 
-        self.transitions.append(
+        self.transitions.append(TransitionEntry
             (
-                wall_time,
-                int(self.session_seq),
-                self.state_name(old_state),
-                self.state_name(new_state),
-                duration_in_prev,
+                wall_time = time.time(),
+                session_seq = int(self.session_seq),
+                from_state = self.state_name(old_state),
+                to_state = self.state_name(new_state),
+                duration_in_prev = duration_in_prev,
             )
         )
 
