@@ -55,8 +55,8 @@ namespace kern::protocol {
 					m_accumulatedCrc = crc32Begin();
 					return DecodeResult::NeedMore;
 				}
-				// not an kStx, still out of sync
-				return DecodeResult::SyncError;
+				// not an kStx, ignore
+				return DecodeResult::NeedMore;
 
 			case State::Type:
 				// get the frame type opcode
