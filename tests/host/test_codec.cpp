@@ -40,6 +40,7 @@ void assertSameFrame(const Frame& expected, const Frame& actual)
 
 void testCrcKat()
 {
+    std::cout << "Running testCrcKat..." << std::endl;
     const char* text = "123456789";
     const auto* data = reinterpret_cast<const uint8_t*>(text);
     const std::size_t len = std::strlen(text);
@@ -57,11 +58,10 @@ void testCrcKat()
 
 void testProtocolConstants()
 {
+    std::cout << "Running testProtocolConstants..." << std::endl;
     assert(kStx == 0xAB);
     assert(kEtx == 0xCD);
     assert(kMaxPayload == 256);
-
-    // Important: frame overhead is STX + TYPE + LEN(2) + CRC(4) + ETX = 9
     assert(kFrameOverhead == 9);
 
     assert(static_cast<uint8_t>(FrameType::CmdStart) == 0x01);
@@ -84,6 +84,7 @@ void testProtocolConstants()
 
 void testAckRoundTrip()
 {
+    std::cout << "Running testAckRoundTrip..." << std::endl;
     Frame original{};
     original.type = FrameType::Ack;
     original.len = 0;
@@ -107,6 +108,7 @@ void testAckRoundTrip()
 
 void testStatusRoundTrip()
 {
+    std::cout << "Running testStatusRoundTrip..." << std::endl;
     Frame original{};
     original.type = FrameType::Status;
     original.len = 14;
@@ -134,6 +136,7 @@ void testStatusRoundTrip()
 
 void testMaxPayloadRoundTrip()
 {
+    std::cout << "Running testMaxPayloadRoundTrip..." << std::endl;
     Frame original{};
     original.type = FrameType::Record;
     original.len = kMaxPayload;
@@ -161,6 +164,7 @@ void testMaxPayloadRoundTrip()
 
 void testCorruptionReturnsCrcError()
 {
+    std::cout << "Running testCorruptionReturnsCrcError..." << std::endl;
     Frame original{};
     original.type = FrameType::Status;
     original.len = 14;
@@ -173,13 +177,6 @@ void testCorruptionReturnsCrcError()
     const std::size_t written = encode(original, encoded, sizeof(encoded));
 
     assert(written == kFrameOverhead + original.len);
-
-    // Layout:
-    // 0 = STX
-    // 1 = TYPE
-    // 2 = LEN_LO
-    // 3 = LEN_HI
-    // 4... = PAYLOAD
     encoded[4 + 5] ^= 0x55u;
 
     Decoder decoder{};
@@ -190,6 +187,7 @@ void testCorruptionReturnsCrcError()
 
 void testResyncAfterGarbage()
 {
+    std::cout << "Running testResyncAfterGarbage..." << std::endl;
     Frame original{};
     original.type = FrameType::Ack;
     original.len = 0;
@@ -198,14 +196,8 @@ void testResyncAfterGarbage()
     const std::size_t written = encode(original, encoded, sizeof(encoded));
 
     Decoder decoder{};
+    const uint8_t garbage[12] = { 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xCC };
 
-    const uint8_t garbage[12] = {
-        0x00, 0x11, 0x22, 0x33,
-        0x44, 0x55, 0x66, 0x77,
-        0x88, 0x99, 0xAA, 0xCC
-    };
-
-    // Garbage before STX should not prevent the next real frame from decoding.
     for (uint8_t b : garbage) {
         DecodeResult r = decoder.feed(b);
         assert(r == DecodeResult::NeedMore || r == DecodeResult::SyncError);
@@ -219,37 +211,33 @@ void testResyncAfterGarbage()
 
 void testOversizedLenReturnsSyncError()
 {
+    std::cout << "Running testOversizedLenReturnsSyncError..." << std::endl;
     Decoder decoder{};
-
     assert(decoder.feed(kStx) == DecodeResult::NeedMore);
     assert(decoder.feed(static_cast<uint8_t>(FrameType::Record)) == DecodeResult::NeedMore);
     assert(decoder.feed(0xFF) == DecodeResult::NeedMore);
-
-    // LEN = 0x01FF = 511, larger than 256
     assert(decoder.feed(0x01) == DecodeResult::SyncError);
 }
 
 void testEncodeRejectsSmallBuffer()
 {
+    std::cout << "Running testEncodeRejectsSmallBuffer..." << std::endl;
     Frame frame{};
     frame.type = FrameType::Ack;
     frame.len = 0;
-
     uint8_t tooSmall[8]{};
     const std::size_t written = encode(frame, tooSmall, sizeof(tooSmall));
-
     assert(written == 0);
 }
 
 void testEncodeRejectsTooLargePayload()
 {
+    std::cout << "Running testEncodeRejectsTooLargePayload..." << std::endl;
     Frame frame{};
     frame.type = FrameType::Record;
     frame.len = static_cast<uint16_t>(kMaxPayload + 1);
-
     uint8_t encoded[300]{};
     const std::size_t written = encode(frame, encoded, sizeof(encoded));
-
     assert(written == 0);
 }
 
@@ -257,6 +245,8 @@ void testEncodeRejectsTooLargePayload()
 
 int main()
 {
+    std::cout << "Starting Codec Host Tests" << std::endl;
+
     testCrcKat();
     testProtocolConstants();
     testAckRoundTrip();
@@ -268,6 +258,6 @@ int main()
     testEncodeRejectsSmallBuffer();
     testEncodeRejectsTooLargePayload();
 
-    std::cout << "test_codec: all tests passed\n";
+    std::cout << "test_codec: all tests passed" << std::endl;
     return 0;
 }

@@ -1,1 +1,0 @@
-../firmware/recorder/state_machine.cpp:4:7:bool kern::recorder::StateMachine::process(kern::recorder::Event)	16	static
