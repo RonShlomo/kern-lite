@@ -5,12 +5,17 @@
 #include "board.hpp"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "../sensors/lm35.hpp"
+#include "../hal/adc.hpp"
 #include <cstring>
 
 extern UART_HandleTypeDef huart2;
 extern IWDG_HandleTypeDef hiwdg;
 
 namespace kern::system {
+	volatile uint16_t debugLm35Raw = 0;
+	volatile float debugLm35Volts = 0.0f;
+	volatile float debugLm35TempC = 0.0f;
 
 	Orchestrator::Orchestrator()
 		: link(&huart2)
@@ -60,7 +65,7 @@ namespace kern::system {
 			// the record is now complete and verified. now we distribute this record to downstream consumers
 			// SensorBus: Internal RTOS bus (for the Storage Task to save to SD card).
 			// CommLink: External UART connection (for the Ground Station GUI).
-			// bus.public(rec); // Uncomment when Storage Task is ready
+			// bus.publish(rec); // Uncomment when Storage Task is ready
 			transmitRecord(rec);
 
 			vTaskDelay(pdMS_TO_TICKS(100));
@@ -92,6 +97,7 @@ namespace kern::system {
 			vTaskDelay(pdMS_TO_TICKS(1000));
 		}
 	}
+
 
 	// --------- helper functions ---------
 

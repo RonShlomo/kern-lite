@@ -9,14 +9,10 @@ namespace kern::sensors {
 			CrcError
 		};
 
-		void init() {}
+		void init();
 
-		Status read(float& tempC, float& humidity)
-		{
-			tempC=0;
-			humidity=0;
+		Status read(float& tempC, float& humidity);
 
-			return Status::Timeout;
-		}
 	};
 }
+

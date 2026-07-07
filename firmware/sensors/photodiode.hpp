@@ -1,13 +1,19 @@
 #pragma once
 
-namespace kern::sensors {
-	class Potentiometer {
-		public:
-		void init() {}
+#include "../hal/adc.hpp"
 
-		float readIntensity()
-		{
-			return 0.0f;
-		}
-	};
+namespace kern::sensors {
+
+class Photodiode {
+public:
+    void init() {}
+
+    float readNormalized()
+    {
+        uint16_t raw = hal::adc::read(board::AdcChannel::Photodiode);
+        float volts = hal::adc::toVolts(raw);
+        return volts / 3.3f;
+    }
+};
+
 }

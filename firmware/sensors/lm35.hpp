@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../hal/adc.hpp"
+
 namespace kern::sensors {
 	class Lm35 {
 		public:
@@ -7,7 +9,10 @@ namespace kern::sensors {
 
 		float readCelsius()
 		{
-			return 0.0f;
+			uint16_t raw = hal::adc::read(board::AdcChannel::Lm35);
+			float volts = hal::adc::toVolts(raw);
+			return volts * 100.0f;
 		}
 	};
 }
+
