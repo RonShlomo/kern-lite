@@ -15,13 +15,15 @@ from groundstation.frame import (
 # current_file=0, total_records=0, wrap_count=0, records_in_file=0
 STUB_STATUS_PAYLOAD = struct.pack("<BBBBIIH", 0, 1, 4, 0, 0, 0, 0)
 
-# TODO(Member C): replace with the raw hex captured from the real board.
-BOARD_STATUS_HEX = encode(
-    Frame(type=FrameType.Status, payload=STUB_STATUS_PAYLOAD)).hex()
+# Captured from real board on COM9 during Phase 2 Member C validation.
+BOARD_STATUS_HEX = (
+    "ab120e00000104000000000000000000000056ec90f4cd"
+)
 
-NACK_BADCOMMAND_HEX = encode(
-    Frame(type=FrameType.Nack, payload=bytes([NackCode.BadCommand]))).hex()
-
+# Captured from real board after sending unknown opcode 0xFF.
+NACK_BADCOMMAND_HEX = (
+    "ab210100025c1c06d6cd"
+)
 # Verified command vectors (CRCs hand-checked against zlib.crc32)
 CMD_STATUS_HEX = "ab0300004b6707fdcd"
 CMD_REPLAY_120_HEX = "ab0402007800a86a4d7ecd"

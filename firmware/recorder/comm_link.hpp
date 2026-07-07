@@ -7,8 +7,8 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
+#include "queue.h"
 #include <cstdint>
-
 
 namespace kern::recorder {
 	class CommLink {
@@ -20,20 +20,25 @@ namespace kern::recorder {
 		void feed(uint8_t byte);
 		bool poll(protocol::Frame& out);
 		void send(const protocol::Frame& f);
+		bool receive(protocol::Frame& out, TickType_t timeoutTicks);
 
 		// helper method that the ISR callback will call
 		// Overrides the HAL's weak C-callback to bridge hardware interrupts into our C++ environment.
 		void handleRxISR();
 
 	private:
+		void feedFromISR(uint8_t byte, BaseType_t* higherPriorityTaskWoken);
+
 		UART_HandleTypeDef* m_uart;
 		protocol::Decoder m_decoder;
 
-		// holds the fully decoded frame until the Comms task is ready to get it
-		protocol::Frame m_pending{};
+		static constexpr UBaseType_t kRxQueueLength = 64;
 
-		// flag to indicate a new frame is waiting (volatile because its modified in an ISR)
-		volatile bool m_frameReady = false;
+		StaticQueue_t m_rxQueueControl{};
+		uint8_t m_rxQueueStorage[kRxQueueLength * sizeof(protocol::Frame)]{};
+		QueueHandle_t m_rxQueue = nullptr;
+
+		volatile uint32_t m_rxDropped = 0;
 
 		// static mutex
 		StaticSemaphore_t m_txMutexBuffer;
