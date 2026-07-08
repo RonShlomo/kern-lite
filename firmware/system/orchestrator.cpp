@@ -74,7 +74,17 @@ namespace kern::system {
 
 	void Orchestrator::runStorageTask()
 	{
-		for (;;) vTaskDelay(pdMS_TO_TICKS(100));
+		uint16_t lastWrittenSeq = 0;
+
+		for (;;) {
+			storage::SensorRecord copy = bus.latest();
+			if (lastWrittenSeq != copy.seq) {
+				box.writeRecord(copy);
+				lastWrittenSeq = copy.seq;
+			}
+
+			vTaskDelay(pdMS_TO_TICKS(100));
+		}
 	}
 
 	void Orchestrator::runCommsTask()
