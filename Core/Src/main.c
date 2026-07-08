@@ -102,7 +102,7 @@ int main(void)
   MX_TIM6_Init();
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
-
+  HAL_TIM_Base_Start(&htim6);
   /* USER CODE END 2 */
 
   /* Init scheduler */

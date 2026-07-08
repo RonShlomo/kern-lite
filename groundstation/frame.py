@@ -1,9 +1,11 @@
 import struct
 from dataclasses import dataclass
-from typing import Optional
 from enum import IntEnum
 
-from crc import crc32
+try:
+    from .crc import crc32
+except ImportError:
+    from crc import crc32
 
 STX: int = 0xAB
 ETX: int = 0xCD

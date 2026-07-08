@@ -141,3 +141,7 @@ def test_command_gating_in_recording():
     assert not dsm.command_allowed(FrameType.CmdStart)
     assert dsm.command_allowed(FrameType.CmdStop)
     assert dsm.command_allowed(FrameType.CmdStatus)
+
+def test_record_crc_cross_vector():
+    body = struct.pack('<IHHhhHHHBBB7x', 12, 345, 5, 253, -15, 605, 32768, 65535, 0x01, 1, 0x02)
+    assert crc32(body) == 0x8CA5C1DB

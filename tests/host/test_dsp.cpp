@@ -21,17 +21,12 @@ bool compare_floats(float a, float b, float epsilon = 0.01f)
 void testMovingAverage() {
     std::cout << "Running testMovingAverage" << std::endl;
 
-    // Create a Moving Average filter with a window size of 3
     dsp::MovingAverage<float, 3> filter;
 
-    // Feed the sequence: [0, 0, 0, 10, 10, 10]
-    // The expected outputs are: 0, 0, 0, 3.33, 6.67, 10.0
-
+    // Feed [0, 0, 0, 10, 10, 10]; expected [0, 0, 0, 3.33, 6.67, 10.0]
     assert(compare_floats(filter.update(0.0f), 0.0f));
     assert(compare_floats(filter.update(0.0f), 0.0f));
     assert(compare_floats(filter.update(0.0f), 0.0f));
-
-    // Now we introduce the 10s. The window shifts.
     assert(compare_floats(filter.update(10.0f), 3.33f)); // (0 + 0 + 10) / 3
     assert(compare_floats(filter.update(10.0f), 6.67f)); // (0 + 10 + 10) / 3
     assert(compare_floats(filter.update(10.0f), 10.0f)); // (10 + 10 + 10) / 3
@@ -41,21 +36,14 @@ void testMovingAverage() {
 void testThresholdRising() {
     std::cout << "Running testThresholdRising" << std::endl;
 
-    // Configure threshold: Normal range is 10 to 90. Hysteresis is 5.
     dsp::ThresholdConfig cfg{10.0f, 90.0f, 5.0f};
     dsp::ThresholdDetector detector(cfg);
 
-    // Start normal
     assert(detector.update(50.0f) == dsp::ThresholdDetector::State::Normal);
-
-    // Cross the 'hi' boundary -> Should trigger HighAlert
     assert(detector.update(95.0f) == dsp::ThresholdDetector::State::HighAlert);
-
-    // Drop back down, BUT not enough to clear the hysteresis zone (90 - 5 = 85)
-    // 88 is inside the hysteresis zone, so the alert should persist!
+    // inside hysteresis zone (90 - 5 = 85): alert must persist
     assert(detector.update(88.0f) == dsp::ThresholdDetector::State::HighAlert);
-
-    // Drop below (hi - hysteresis - epsilon) -> Should clear the alert
+    // below hi - hysteresis: clears
     assert(detector.update(84.9f) == dsp::ThresholdDetector::State::Normal);
 }
 
@@ -66,13 +54,9 @@ void testThresholdFalling() {
     dsp::ThresholdConfig cfg{10.0f, 90.0f, 5.0f};
     dsp::ThresholdDetector detector(cfg);
 
-    // Cross the 'lo' boundary -> Should trigger LowAlert
     assert(detector.update(5.0f) == dsp::ThresholdDetector::State::LowAlert);
-
-    // Rise back up, but still inside hysteresis zone (10 + 5 = 15)
+    // inside hysteresis zone (10 + 5 = 15): alert must persist
     assert(detector.update(12.0f) == dsp::ThresholdDetector::State::LowAlert);
-
-    // Rise above (lo + hysteresis + epsilon) -> Should clear the alert
     assert(detector.update(15.1f) == dsp::ThresholdDetector::State::Normal);
 }
 
@@ -83,46 +67,61 @@ void testNoChatter() {
     dsp::ThresholdConfig cfg{10.0f, 90.0f, 5.0f};
     dsp::ThresholdDetector detector(cfg);
 
-    // Force a HighAlert
-    detector.update(100.0f);
-
-    // Hover exactly at the boundary (hi - hysteresis)
-    // The state must NOT toggle. It should remain HighAlert.
+    detector.update(100.0f); // force HighAlert
+    // hover exactly at the boundary (hi - hysteresis): must not toggle
     for (int i = 0; i < 10; ++i) {
         assert(detector.update(85.0f) == dsp::ThresholdDetector::State::HighAlert);
     }
 }
 
-// TEST 5: MEMORY LAYOUT ASSERTIONS
+// TEST 5: MEMORY LAYOUT ASSERTIONS (compile-time)
 void testMemoryLayout() {
     std::cout << "Running testMemoryLayout" << std::endl;
 
-    // These checks run at compile-time. If the struct is packed incorrectly,
-    // the code will refuse to compile, preventing bugs on the SD card later.
     static_assert(sizeof(storage::SensorRecord) == 32, "SensorRecord size must be exactly 32 bytes");
     static_assert(offsetof(storage::SensorRecord, crc32) == 28, "crc32 field must be at byte offset 28");
 }
 
-// TEST 6: RECORD CRC VALIDATION
+// TEST 6: RECORD CRC CROSS-IMPLEMENTATION VECTORS
+//
+// Expected values were computed independently by the Python ground station:
+//   body = struct.pack('<IHHhhHHHBBB7x', <fields...>)
+//   crc32(body)  ->  hardcoded below
+// If these asserts fail, the C++ CRC parameters or the SensorRecord byte
+// layout diverge from the Python implementation.
 void testRecordCrc() {
     std::cout << "Running testRecordCrc" << std::endl;
 
-    storage::SensorRecord rec;
+    // Vector 1: all-zero record with seq = 1
+    {
+        storage::SensorRecord rec;
+        std::memset(&rec, 0, sizeof(rec));
+        rec.seq = 1;
 
-    // Zero out the entire memory block to ensure no garbage bytes affect the CRC
-    std::memset(&rec, 0, sizeof(rec));
+        uint32_t crc = protocol::crc32(reinterpret_cast<const uint8_t*>(&rec), 28);
+        assert(crc == 0x97581329u); // from Python: crc32(pack('<IHHhhHHHBBB7x', 0,0,1,0,0,0,0,0,0,0,0))
+        rec.crc32 = crc;
+    }
 
-    // Set known fields
-    rec.seq = 1;
+    // Vector 2: fully populated record, exercises signed fields and all offsets
+    {
+        storage::SensorRecord rec;
+        std::memset(&rec, 0, sizeof(rec));
+        rec.timestamp  = 12;
+        rec.ms         = 345;
+        rec.seq        = 5;
+        rec.lm35_c     = 253;     // 25.3 degC
+        rec.dht_temp_c = -15;     // -1.5 degC (signed)
+        rec.dht_hum    = 605;     // 60.5 %RH
+        rec.light      = 32768;
+        rec.pot        = 65535;
+        rec.alert_bits = 0x01;
+        rec.state      = 1;
+        rec.fault_bits = 0x02;
 
-    // Compute CRC over the first 28 bytes (everything before the crc32 field itself)
-    uint32_t expectedCrc = protocol::crc32(reinterpret_cast<const uint8_t*>(&rec), 28);
-
-    // Write it back to the struct (as the firmware does)
-    rec.crc32 = expectedCrc;
-
-    // Verify it matches
-    assert(rec.crc32 == expectedCrc);
+        uint32_t crc = protocol::crc32(reinterpret_cast<const uint8_t*>(&rec), 28);
+        assert(crc == 0x8CA5C1DBu); // from Python, same fields
+    }
 }
 
 // MAIN ENTRY POINT
