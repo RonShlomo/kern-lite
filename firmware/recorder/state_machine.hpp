@@ -20,7 +20,7 @@ namespace kern::recorder {
 
 	class StateMachine {
 	public:
-		bool process(Event);
+		bool process(Event event);
 		State state() const
 		{
 			return m_state;

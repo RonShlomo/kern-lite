@@ -76,7 +76,7 @@ def test_resync_after_garbage():
     good = encode(Frame(type=FrameType.Ack))
     d = Decoder()
     result = decode_all(d, garbage + good)
-    assert result == DecodeResult.FrameReady
+    assert result == DecodeResult.NeedMore
     assert d.frame().type == FrameType.Ack
 
 

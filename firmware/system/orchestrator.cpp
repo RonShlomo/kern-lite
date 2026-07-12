@@ -160,8 +160,8 @@ namespace kern::system {
 		}
 
 		// write the last known good values (or 0.0f if never read)
-		rec.dht_temp_c = static_cast<int16_t>(m_lastDhtTemp);
-		rec.dht_hum = static_cast<uint16_t>(m_lastDhtHum);
+		rec.dht_temp_c = static_cast<int16_t>(m_lastDhtTemp * 10.0);
+		rec.dht_hum = static_cast<uint16_t>(m_lastDhtHum * 10.0);
 	}
 
 
