@@ -25,10 +25,10 @@
 
 #include "ff.h"
 #include "ff_gen_drv.h"
-#include "user_diskio.h" /* defines USER_Driver as external */
+ /* defines USER_Driver as external */
 
 /* USER CODE BEGIN Includes */
-
+#include "user_diskio_spi.h"
 /* USER CODE END Includes */
 
 extern uint8_t retUSER; /* Return value for USER */
