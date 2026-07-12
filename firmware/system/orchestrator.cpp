@@ -26,7 +26,7 @@ namespace kern::system {
 	{
 		bus.init();
 		link.init();
-		handler.init(&link);
+		handler.init(&link, &sm, &box);
 
 		// initialize DSP channels thresholds on system startup
 		chLm35.configure(kern::config::kThresholdLm35);
