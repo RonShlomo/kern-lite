@@ -28,6 +28,7 @@ namespace kern::system {
 		link.init();
 		handler.init(&link, &sm, &box);
 
+		m_buttons.init();
 		// initialize DSP channels thresholds on system startup
 		chLm35.configure(kern::config::kThresholdLm35);
 		chPhoto.configure(kern::config::kThresholdPhoto);
@@ -37,6 +38,13 @@ namespace kern::system {
 	void Orchestrator::runSensorTask()
 	{
 		for (;;) {
+
+			// only works on recording
+			if (!sm.isLogging()) {
+			    vTaskDelay(pdMS_TO_TICKS(100));
+			    continue;
+			}
+
 			kern::storage::SensorRecord rec{};
 			uint8_t current_faults = 0;
 			uint8_t current_alerts = 0;
@@ -45,7 +53,7 @@ namespace kern::system {
 			rec.timestamp = HAL_GetTick() / 1000;
 			rec.ms = HAL_GetTick() % 1000;
 			rec.seq = ++m_recSeq;
-			rec.state = 0;
+			rec.state = static_cast<uint8_t>(sm.state());
 
 			// collect and process data
 			processAnalogSensors(rec, current_faults);
@@ -65,7 +73,7 @@ namespace kern::system {
 			// the record is now complete and verified. now we distribute this record to downstream consumers
 			// SensorBus: Internal RTOS bus (for the Storage Task to save to SD card).
 			// CommLink: External UART connection (for the Ground Station GUI).
-			// bus.publish(rec); // Uncomment when Storage Task is ready
+			bus.publish(rec);
 			transmitRecord(rec);
 
 			vTaskDelay(pdMS_TO_TICKS(100));
@@ -75,14 +83,31 @@ namespace kern::system {
 	void Orchestrator::runStorageTask()
 	{
 		uint16_t lastWrittenSeq = 0;
+		uint8_t consecutiveWriteFailures = 0;
 
 		for (;;) {
+			// only writes on recording
+			if (!sm.isLogging()) {
+			    consecutiveWriteFailures = 0;
+			    vTaskDelay(pdMS_TO_TICKS(100));
+			    continue;
+			}
 			storage::SensorRecord copy = bus.latest();
 			if (lastWrittenSeq != copy.seq) {
-				box.writeRecord(copy);
-				lastWrittenSeq = copy.seq;
-			}
+				const storage::StorageStatus status = box.writeRecord(copy);
 
+				if (status == storage::StorageStatus::Ok) {
+					lastWrittenSeq = copy.seq;
+			        consecutiveWriteFailures = 0;
+				} else {
+					++consecutiveWriteFailures;
+
+					if (consecutiveWriteFailures >= 3) {
+						sm.process(recorder::Event::SdFault);
+						consecutiveWriteFailures = 0;
+					}
+				}
+			}
 			vTaskDelay(pdMS_TO_TICKS(100));
 		}
 	}
@@ -92,21 +117,63 @@ namespace kern::system {
 	    for (;;) {
 	        kern::protocol::Frame f{};
 
-	        if (link.receive(f, pdMS_TO_TICKS(10))) {
-	            handler.dispatch(f);
-
-	            while (link.poll(f)) {
-	                handler.dispatch(f);
-	            }
+	        while (link.poll(f)) {
+	        	handler.dispatch(f);
 	        }
+
+	        vTaskDelay(pdMS_TO_TICKS(10));
 	    }
 	}
 
+	// check this, isn't working good
 	void Orchestrator::runSystemTask() {
+
+		uint32_t lastFaultBlinkMs = HAL_GetTick();
+		uint32_t lastStatusMs = HAL_GetTick();
+
 		for (;;) {
-			hal::gpio::toggle(board::LED1_BLUE);
-			hal::watchdog::kick(hiwdg);
-			vTaskDelay(pdMS_TO_TICKS(1000));
+	        hal::watchdog::kick(hiwdg);
+
+			if (sm.isIdle()) {
+				hal::gpio::clear(board::RGB_G);
+				hal::gpio::clear(board::LED2_RED);
+
+				lastFaultBlinkMs = HAL_GetTick();
+
+			} else if (sm.isLogging()) {
+				hal::gpio::set(board::RGB_G);
+				hal::gpio::clear(board::LED2_RED);
+
+				lastFaultBlinkMs = HAL_GetTick();
+
+			} else if (sm.isFault()) {
+				 hal::gpio::clear(board::RGB_G);
+
+				 if ((HAL_GetTick() - lastFaultBlinkMs) >= 500u) {
+					 hal::gpio::toggle(board::LED2_RED);
+					 lastFaultBlinkMs = HAL_GetTick();
+				 }
+			}
+
+			const sensors::PressType press = m_buttons.pollSw1();
+
+			if (press == sensors::PressType::Short && sm.isLogging()) {
+				const storage::StorageStatus flushStatus = box.flushMeta();
+
+				if (flushStatus == storage::StorageStatus::Ok) {
+					sm.process(recorder::Event::ShortPress);
+					handler.sendStatus();
+				}
+			}
+
+			const uint32_t now = HAL_GetTick();
+
+			if ((now - lastStatusMs) >= 5000u) {
+			    handler.sendStatus();
+			    lastStatusMs = now;
+			}
+
+			vTaskDelay(pdMS_TO_TICKS(50));
 		}
 	}
 
