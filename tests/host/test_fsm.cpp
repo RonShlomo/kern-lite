@@ -119,9 +119,10 @@ void test_command_handler_guards() {
 
     CommLink link(nullptr);
     StateMachine sm;
+    CircularLog log;
     CommandHandler handler;
 
-    handler.init(&link);
+    handler.init(&link, &sm, &log);
 
     Frame cmd{};
 
