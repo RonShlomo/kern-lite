@@ -67,7 +67,7 @@ namespace kern::storage {
 
 	StorageStatus CircularLog::readMeta()
 	{
-		FIL metaFile;
+		FIL metaFile{};
 		// Open META.BIN
 		if (f_open(&metaFile, "0:META.BIN", FA_READ | FA_OPEN_EXISTING) != FR_OK) {
 			return StorageStatus::NotMounted;
@@ -101,7 +101,7 @@ namespace kern::storage {
 		// recompute the CRC before saving to the SD card
 		m_meta.crc32 = protocol::crc32(reinterpret_cast<const uint8_t*>(&m_meta), offsetof(LogMeta, crc32));
 
-		FIL metaFile;
+		FIL metaFile{};
 		// open or create META.BIN, allowing write access
 		if (f_open(&metaFile, "0:META.BIN", FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) {
 			return StorageStatus::IoError;
