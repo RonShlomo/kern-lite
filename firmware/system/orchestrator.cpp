@@ -27,6 +27,8 @@ namespace kern::system {
 		bus.init();
 		link.init();
 		handler.init(&link);
+		box.mount();
+		m_recSeq = box.newestSeq();
 
 		// initialize DSP channels thresholds on system startup
 		chLm35.configure(kern::config::kThresholdLm35);
@@ -65,7 +67,7 @@ namespace kern::system {
 			// the record is now complete and verified. now we distribute this record to downstream consumers
 			// SensorBus: Internal RTOS bus (for the Storage Task to save to SD card).
 			// CommLink: External UART connection (for the Ground Station GUI).
-			// bus.publish(rec); // Uncomment when Storage Task is ready
+			bus.publish(rec); // Uncomment when Storage Task is ready
 			transmitRecord(rec);
 
 			vTaskDelay(pdMS_TO_TICKS(100));

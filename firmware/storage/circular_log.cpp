@@ -147,10 +147,16 @@ namespace kern::storage
 		return StorageStatus::Ok;
 	}
 
+	// true if 'a' is newer than 'b' in modulo-65536 sequence space
+	static bool seqNewer(uint16_t a, uint16_t b)
+	{
+	    return static_cast<uint16_t>(a - b) < 0x8000;
+	}
+
 	// recover position in case of recovering after collapse
 	StorageStatus CircularLog::recoverPosition()
 	{
-		uint32_t newest_seq = 0;
+		uint16_t newest_seq = 0;
 		uint8_t newest_file = 0;
 		uint16_t newest_index = 0;
 		bool found_any_valid = false;
@@ -178,7 +184,7 @@ namespace kern::storage
 					if (recordCrc(rec) == rec.crc32)
 					{
 						// find the highest sequence number
-						if (found_any_valid == false || rec.seq > newest_seq)
+						if (found_any_valid == false || seqNewer(rec.seq, newest_seq))
 						{
 							newest_seq = rec.seq;
 							newest_file = f;
@@ -193,6 +199,7 @@ namespace kern::storage
 		// if we found valid data, set the write head one step after the newest record
 		if (found_any_valid == true)
 		{
+			m_newestSeq = newest_seq;
 			m_meta.current_file = newest_file;
 			m_meta.write_index = newest_index + 1;
 
@@ -234,6 +241,8 @@ namespace kern::storage
 		{
 			return StorageStatus::IoError;
 		}
+
+		f_sync(current_file);
 
 		// advance indexes
 		++m_meta.write_index;

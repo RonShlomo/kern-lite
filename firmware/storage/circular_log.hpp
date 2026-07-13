@@ -54,6 +54,7 @@ namespace kern::storage
 		StorageStatus replayNewest(uint32_t n, RecordCb cb, void *ctx);
 		StorageStatus eraseAll(uint32_t magic);
 
+		uint16_t newestSeq() const { return m_newestSeq; }
 		uint32_t totalRecords() const { return m_meta.total_records; }
 		uint32_t wrapCount() const { return m_meta.wrap_count; }
 		uint8_t currentFile() const { return m_meta.current_file; }
@@ -66,6 +67,7 @@ namespace kern::storage
 		StorageStatus recoverPosition();
 		uint32_t metaCrc(const LogMeta &m);
 		uint32_t recordCrc(const SensorRecord &r);
+		uint16_t m_newestSeq = 0;
 
 		FATFS m_fatfs{};
 		FIL m_files[LOG_FILE_COUNT]{};
