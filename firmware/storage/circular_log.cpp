@@ -350,4 +350,13 @@ namespace kern::storage
 		return mount();
 	}
 
+	StorageStatus CircularLog::flushMeta()
+	{
+	    if (!m_mounted) {
+	        return StorageStatus::NotMounted;
+	    }
+
+	    return writeMeta();
+	}
+
 } // namespace kern::storage

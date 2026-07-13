@@ -30,6 +30,7 @@ namespace kern::system {
 		box.mount();
 		m_recSeq = box.newestSeq();
 
+
 		// initialize DSP channels thresholds on system startup
 		chLm35.configure(kern::config::kThresholdLm35);
 		chPhoto.configure(kern::config::kThresholdPhoto);

@@ -53,6 +53,7 @@ namespace kern::storage
 		StorageStatus writeRecord(const SensorRecord &r);
 		StorageStatus replayNewest(uint32_t n, RecordCb cb, void *ctx);
 		StorageStatus eraseAll(uint32_t magic);
+		StorageStatus flushMeta();
 
 		uint16_t newestSeq() const { return m_newestSeq; }
 		uint32_t totalRecords() const { return m_meta.total_records; }
