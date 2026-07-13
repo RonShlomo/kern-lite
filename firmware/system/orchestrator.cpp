@@ -26,7 +26,7 @@ namespace kern::system {
 	{
 		bus.init();
 		link.init();
-		handler.init(&link);
+		handler.init(&link, &sm, &box);
 
 		// initialize DSP channels thresholds on system startup
 		chLm35.configure(kern::config::kThresholdLm35);
@@ -74,7 +74,17 @@ namespace kern::system {
 
 	void Orchestrator::runStorageTask()
 	{
-		for (;;) vTaskDelay(pdMS_TO_TICKS(100));
+		uint16_t lastWrittenSeq = 0;
+
+		for (;;) {
+			storage::SensorRecord copy = bus.latest();
+			if (lastWrittenSeq != copy.seq) {
+				box.writeRecord(copy);
+				lastWrittenSeq = copy.seq;
+			}
+
+			vTaskDelay(pdMS_TO_TICKS(100));
+		}
 	}
 
 	void Orchestrator::runCommsTask()
