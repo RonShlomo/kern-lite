@@ -128,52 +128,46 @@ namespace kern::system {
 	// check this, isn't working good
 	void Orchestrator::runSystemTask() {
 
-		uint32_t lastFaultBlinkMs = HAL_GetTick();
-		uint32_t lastStatusMs = HAL_GetTick();
+		TickType_t lastWake = xTaskGetTickCount();
+		uint8_t halfSecondCounter = 0;
+
+		hal::gpio::clear(board::LED1_BLUE);
+		hal::gpio::clear(board::RGB_G);
+		hal::gpio::clear(board::LED2_RED);
 
 		for (;;) {
-	        hal::watchdog::kick(hiwdg);
+			hal::watchdog::kick(hiwdg);
 
-			if (sm.isIdle()) {
-				hal::gpio::clear(board::RGB_G);
-				hal::gpio::clear(board::LED2_RED);
+	        ++halfSecondCounter;
 
-				lastFaultBlinkMs = HAL_GetTick();
+	        if (halfSecondCounter >= 10) {
+	        	halfSecondCounter = 0;
 
-			} else if (sm.isLogging()) {
-				hal::gpio::set(board::RGB_G);
-				hal::gpio::clear(board::LED2_RED);
+	        	hal::gpio::toggle(board::LED1_BLUE);
+	        }
 
-				lastFaultBlinkMs = HAL_GetTick();
+	        switch (sm.state()) {
 
-			} else if (sm.isFault()) {
-				 hal::gpio::clear(board::RGB_G);
+	        	case recorder::State::Idle:
+	        		hal::gpio::clear(board::RGB_G);
+	        		hal::gpio::clear(board::LED2_RED);
+	        		break;
 
-				 if ((HAL_GetTick() - lastFaultBlinkMs) >= 500u) {
-					 hal::gpio::toggle(board::LED2_RED);
-					 lastFaultBlinkMs = HAL_GetTick();
-				 }
-			}
+	        	case recorder::State::Recording:
+	        		hal::gpio::set(board::RGB_G);
+	        		hal::gpio::clear(board::LED2_RED);
+	        		break;
 
-			const sensors::PressType press = m_buttons.pollSw1();
+	        	case recorder::State::Fault:
+	        		hal::gpio::clear(board::RGB_G);
 
-			if (press == sensors::PressType::Short && sm.isLogging()) {
-				const storage::StorageStatus flushStatus = box.flushMeta();
+	        		if (halfSecondCounter == 0) {
+	        			hal::gpio::toggle(board::LED2_RED);
+	        		}
+	        		break;
+	        }
 
-				if (flushStatus == storage::StorageStatus::Ok) {
-					sm.process(recorder::Event::ShortPress);
-					handler.sendStatus();
-				}
-			}
-
-			const uint32_t now = HAL_GetTick();
-
-			if ((now - lastStatusMs) >= 5000u) {
-			    handler.sendStatus();
-			    lastStatusMs = now;
-			}
-
-			vTaskDelay(pdMS_TO_TICKS(50));
+	        vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(50));
 		}
 	}
 

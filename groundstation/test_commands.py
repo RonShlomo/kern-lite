@@ -46,6 +46,10 @@ def main() -> None:
         commands.send_start(link)
         wait_for_frames(link, 2.0)
 
+        print("Checking state after START...")
+        commands.send_status(link)
+        wait_for_frames(link, 1.0)
+
         print("The green LED on PC6 should now be on.")
         input("Press Enter to send STOP...")
 
