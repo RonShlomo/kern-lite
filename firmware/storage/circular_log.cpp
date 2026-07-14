@@ -9,6 +9,46 @@
 namespace kern::storage
 {
 
+	namespace
+	{
+		// [Claude] added: RAII helper so every locked method releases the mutex on every return
+		// path (there are several early returns below) without needing to remember to call
+		// xSemaphoreGive() before each one.
+		class ScopedLock
+		{
+		public:
+			// [Claude] added: blocks (forever) until the mutex is free, mirroring the
+			// xSemaphoreTake(..., portMAX_DELAY) pattern already used in comm_link.cpp.
+			explicit ScopedLock(SemaphoreHandle_t sem) : m_sem(sem)
+			{
+				xSemaphoreTake(m_sem, portMAX_DELAY);
+			}
+
+			// [Claude] added: releases the mutex when the guard goes out of scope.
+			~ScopedLock()
+			{
+				xSemaphoreGive(m_sem);
+			}
+
+			// [Claude] added: this guard owns a lock; copying it would double-release.
+			ScopedLock(const ScopedLock &) = delete;
+			ScopedLock &operator=(const ScopedLock &) = delete;
+
+		private:
+			SemaphoreHandle_t m_sem;
+		};
+	} // namespace
+
+	// [Claude] added: creates the static mutex on first use. Called at the top of every public
+	// method below, before constructing a ScopedLock.
+	void CircularLog::ensureMutexCreated()
+	{
+		if (m_mutex == nullptr)
+		{
+			m_mutex = xSemaphoreCreateMutexStatic(&m_mutexBuffer);
+		}
+	}
+
 	CircularLog::~CircularLog()
 	{
 		for (uint8_t i = 0; i < LOG_FILE_COUNT; ++i)
@@ -28,6 +68,18 @@ namespace kern::storage
 	}
 
 	StorageStatus CircularLog::mount()
+	{
+		// [Claude] added: create-if-needed the mutex, then hold it for the whole mount sequence
+		// so it can't interleave with a writeRecord()/flushMeta()/replayNewest()/eraseAll() call
+		// running on another task.
+		ensureMutexCreated();
+		ScopedLock guard(m_mutex);
+		// [Claude] added: the actual mount logic now lives in mountLocked() (unchanged below,
+		// just moved) so eraseAll() can call it directly while already holding this same lock.
+		return mountLocked();
+	}
+
+	StorageStatus CircularLog::mountLocked()
 	{
 		// Mount the FAT filesystem immediately
 		if (f_mount(&m_fatfs, "0:", 1) != FR_OK)
@@ -224,6 +276,11 @@ namespace kern::storage
 	// write record (save data to the SD card)
 	StorageStatus CircularLog::writeRecord(const SensorRecord &r)
 	{
+		// [Claude] added: the Storage task calls this every ~100ms while Recording; take the
+		// same lock CMD_STOP/short-press flushMeta() and CMD_STATUS's snapshot() use, so a
+		// write can never interleave with a metadata flush or a status read from another task.
+		ensureMutexCreated();
+		ScopedLock guard(m_mutex);
 		// copy the record because the input is const, and calculate its crc
 		SensorRecord stored = r;
 		stored.crc32 = recordCrc(stored);
@@ -276,6 +333,12 @@ namespace kern::storage
 	// replay newest (send history to python)
 	StorageStatus CircularLog::replayNewest(uint32_t n, RecordCb cb, void *ctx)
 	{
+		// [Claude] added: REPLAY is only dispatched while Idle, so by FSM construction it
+		// shouldn't overlap a Recording-only writeRecord() call -- but it still reads the same
+		// m_meta/m_files state flushMeta() (short-press, or a queued CMD_STOP) can touch, so it
+		// takes the same lock rather than relying on that invariant never changing.
+		ensureMutexCreated();
+		ScopedLock guard(m_mutex);
 		uint32_t total_capacity = LOG_FILE_COUNT * RECORDS_PER_FILE;
 
 		// limit n so we don't try to send records we don't have
@@ -323,6 +386,10 @@ namespace kern::storage
 
 	StorageStatus CircularLog::eraseAll(uint32_t magic)
 	{
+		// [Claude] added: ERASE is Idle-only, so it can't race a writeRecord(), but it does race
+		// STATUS reads (any state) and it must not interleave with flushMeta() either.
+		ensureMutexCreated();
+		ScopedLock guard(m_mutex);
 		// verify magic == erase magic
 		if (magic != ERASE_MAGIC)
 		{
@@ -348,17 +415,40 @@ namespace kern::storage
 		std::memset(&m_meta, 0, sizeof(LogMeta));
 		m_newestSeq = 0;
 
-		// call mount() to create new files and zeroed metadata
-		return mount();
+		// [Claude] changed: call mountLocked() instead of mount() -- this method already holds
+		// the mutex above, and mount() would try to take it again (this mutex is non-recursive,
+		// so that call would deadlock this task against itself).
+		return mountLocked();
 	}
 
 	StorageStatus CircularLog::flushMeta()
 	{
+		// [Claude] added: this is the method at the center of the race we discussed -- CMD_STOP
+		// and the short-press handler both call flushMeta() while the Storage task may still be
+		// mid-writeRecord() on another task, so both now go through the same lock.
+		ensureMutexCreated();
+		ScopedLock guard(m_mutex);
 	    if (!m_mounted) {
 	        return StorageStatus::NotMounted;
 	    }
 
 	    return writeMeta();
+	}
+
+	// [Claude] added: single-lock read of every field CommandHandler::sendStatus() needs, so a
+	// STATUS frame can no longer be built from a torn mix of pre-wrap/post-wrap values.
+	StatusSnapshot CircularLog::snapshot()
+	{
+		ensureMutexCreated();
+		ScopedLock guard(m_mutex);
+
+		StatusSnapshot s{};
+		s.mounted = m_mounted;
+		s.currentFile = m_meta.current_file;
+		s.writeIndex = m_meta.write_index;
+		s.totalRecords = m_meta.total_records;
+		s.wrapCount = m_meta.wrap_count;
+		return s;
 	}
 
 } // namespace kern::storage

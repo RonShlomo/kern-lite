@@ -43,8 +43,8 @@ namespace kern::system {
 		for (;;) {
 			// only works on recording
 			if (!sm.isLogging()) {
-			    vTaskDelay(pdMS_TO_TICKS(100));
-			    continue;
+				vTaskDelay(pdMS_TO_TICKS(100));
+				continue;
 			}
 
 			kern::storage::SensorRecord rec{};
@@ -91,9 +91,9 @@ namespace kern::system {
 		for (;;) {
 			// only writes on recording
 			if (!sm.isLogging()) {
-			    consecutiveWriteFailures = 0;
-			    vTaskDelay(pdMS_TO_TICKS(100));
-			    continue;
+				consecutiveWriteFailures = 0;
+				vTaskDelay(pdMS_TO_TICKS(100));
+				continue;
 			}
 			storage::SensorRecord copy = bus.latest();
 			if (lastWrittenSeq != copy.seq) {
@@ -101,7 +101,7 @@ namespace kern::system {
 
 				if (status == storage::StorageStatus::Ok) {
 					lastWrittenSeq = copy.seq;
-			        consecutiveWriteFailures = 0;
+					consecutiveWriteFailures = 0;
 				} else {
 					++consecutiveWriteFailures;
 
@@ -120,18 +120,19 @@ namespace kern::system {
 		for (;;) {
 			kern::protocol::Frame f{};
 
-	        while (link.poll(f)) {
-	        	handler.dispatch(f);
-	        }
+			while (link.poll(f)) {
+				handler.dispatch(f);
+			}
 
-	        vTaskDelay(pdMS_TO_TICKS(10));
-	    }
+			vTaskDelay(pdMS_TO_TICKS(10));
+		}
 	}
 
 	void Orchestrator::runSystemTask() {
 
 		TickType_t lastWake = xTaskGetTickCount();
 		uint8_t halfSecondCounter = 0;
+		uint8_t heartbeatCounter = 0;
 
 		hal::gpio::clear(board::LED1_BLUE);
 		hal::gpio::clear(board::RGB_G);
@@ -140,34 +141,47 @@ namespace kern::system {
 		for (;;) {
 			hal::watchdog::kick(hiwdg);
 
-	        ++halfSecondCounter;
+			if (m_buttons.pollSw1() == sensors::PressType::Short) {
+				if (sm.process(recorder::Event::ShortPress)) {
+					box.flushMeta();
+					handler.sendStatus();
+				}
+			}
 
-	        if (halfSecondCounter >= 10) {
-	        	halfSecondCounter = 0;
-	        }
+			++halfSecondCounter;
 
-	        switch (sm.state()) {
+			++heartbeatCounter;
+			if (heartbeatCounter >= 100) {
+				heartbeatCounter = 0;
+				handler.sendStatus();
+			}
 
-	        	case recorder::State::Idle:
-	        		hal::gpio::clear(board::RGB_G);
-	        		hal::gpio::clear(board::LED2_RED);
-	        		break;
+			if (halfSecondCounter >= 10) {
+				halfSecondCounter = 0;
+			}
 
-	        	case recorder::State::Recording:
-	        		hal::gpio::set(board::RGB_G);
-	        		hal::gpio::clear(board::LED2_RED);
-	        		break;
+			switch (sm.state()) {
 
-	        	case recorder::State::Fault:
-	        		hal::gpio::clear(board::RGB_G);
+			case recorder::State::Idle:
+				hal::gpio::clear(board::RGB_G);
+				hal::gpio::clear(board::LED2_RED);
+				break;
 
-	        		if (halfSecondCounter == 0) {
-	        			hal::gpio::toggle(board::LED2_RED);
-	        		}
-	        		break;
-	        }
+			case recorder::State::Recording:
+				hal::gpio::set(board::RGB_G);
+				hal::gpio::clear(board::LED2_RED);
+				break;
 
-	        vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(50));
+			case recorder::State::Fault:
+				hal::gpio::clear(board::RGB_G);
+
+				if (halfSecondCounter == 0) {
+					hal::gpio::toggle(board::LED2_RED);
+				}
+				break;
+			}
+
+			vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(50));
 		}
 	}
 

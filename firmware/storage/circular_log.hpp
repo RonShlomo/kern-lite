@@ -2,6 +2,11 @@
 
 #include "sensor_record.hpp"
 #include "ff.h" // Required for FATFS and FIL types
+// [Claude] added: FreeRTOS.h/semphr.h declare the static-mutex types (StaticSemaphore_t,
+// SemaphoreHandle_t) and primitives (xSemaphoreCreateMutexStatic/Take/Give) used below to
+// serialize access to this object across the Sensor/Storage task and the Comms/System tasks.
+#include "FreeRTOS.h"
+#include "semphr.h"
 #include <cstdint>
 
 namespace kern::storage
@@ -44,6 +49,21 @@ namespace kern::storage
 
 	using RecordCb = bool (*)(const SensorRecord &, void *ctx);
 
+	// [Claude] added: a single, lock-consistent view of the fields CommandHandler::sendStatus()
+	// needs. Previously sendStatus() called currentFile()/writeIndex()/totalRecords()/
+	// wrapCount()/isMounted() as five separate unlocked reads, which could observe a torn mix
+	// of pre-wrap and post-wrap values if the Storage task was mid-writeRecord() at that exact
+	// instant. snapshot() takes the same mutex writeRecord() takes, so every field it returns
+	// reflects one consistent point in time.
+	struct StatusSnapshot
+	{
+		bool mounted;
+		uint8_t currentFile;
+		uint16_t writeIndex;
+		uint32_t totalRecords;
+		uint32_t wrapCount;
+	};
+
 	class CircularLog
 	{
 	public:
@@ -54,6 +74,9 @@ namespace kern::storage
 		StorageStatus replayNewest(uint32_t n, RecordCb cb, void *ctx);
 		StorageStatus eraseAll(uint32_t magic);
 		StorageStatus flushMeta();
+
+		// [Claude] added: thread-safe replacement for reading multiple STATUS fields individually.
+		StatusSnapshot snapshot();
 
 		uint16_t newestSeq() const { return m_newestSeq; }
 		uint32_t totalRecords() const { return m_meta.total_records; }
@@ -68,6 +91,15 @@ namespace kern::storage
 		StorageStatus recoverPosition();
 		uint32_t metaCrc(const LogMeta &m);
 		uint32_t recordCrc(const SensorRecord &r);
+		// [Claude] added: mount()'s original body, extracted verbatim so eraseAll() can re-run
+		// it while already holding the lock, without taking the (non-recursive) mutex twice
+		// from the same task -- that would deadlock.
+		StorageStatus mountLocked();
+		// [Claude] added: lazily creates the static mutex on first use (mount()/writeRecord()/etc.
+		// are all reachable before any explicit "init()" step exists on this class). Safe to call
+		// every time; it only creates the semaphore once.
+		void ensureMutexCreated();
+
 		uint16_t m_newestSeq = 0;
 
 		FATFS m_fatfs{};
@@ -75,6 +107,13 @@ namespace kern::storage
 		bool m_filesOpen[LOG_FILE_COUNT]{};
 		LogMeta m_meta{};
 		bool m_mounted = false;
+
+		// [Claude] added: guards every method that touches m_meta or the SD card. FatFs/SPI1 is a
+		// single shared peripheral, so without this, the Sensor/Storage task and the Comms/System
+		// task (via CommandHandler's flushMeta()/replayNewest()/eraseAll() calls) could issue
+		// concurrent FatFs calls and interleave SPI transactions, not just read stale fields.
+		StaticSemaphore_t m_mutexBuffer{};
+		SemaphoreHandle_t m_mutex = nullptr;
 	};
 
 } // namespace kern::storage

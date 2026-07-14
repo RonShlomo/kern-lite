@@ -1,0 +1,94 @@
+KERN-LITE Phase 5 Live Integration Test
+Port: COM4
+Live duration: 30.0 s
+Replay count: 60
+
+Requesting initial STATUS...
+[PASS] Initial STATUS received: STATUS frame received
+Initial STATUS:
+  state=0
+  sd_mounted=1
+  file_count=4
+  current_file=1
+  total_records=1325
+  wrap_count=1
+  records_in_file=47
+[PASS] Device starts in Idle: state=0
+[PASS] SD card mounted: sd_mounted=1
+
+Sending START...
+[PASS] START ACK: ack_received=True
+[PASS] START enters Recording: state=1 received
+
+Capturing live RECORD frames for 30.0 seconds...
+Live capture complete: count=287, first_seq=1728, last_seq=2014
+[PASS] Live record count: received=287, expected_range=240..362
+[PASS] Live record CRC: crc_errors=0, malformed=0
+[PASS] Live sequence continuity: no gaps
+
+Sending STOP...
+[PASS] STOP ACK: ack_received=True
+[PASS] STOP enters Idle: state=0 received
+STATUS after STOP:
+  state=0
+  sd_mounted=1
+  file_count=4
+  current_file=2
+  total_records=1561
+  wrap_count=1
+  records_in_file=27
+[PASS] Streaming stops: trailing_records=0
+[FAIL] Stored versus received records: stored_delta=236, live_received=288, difference=52, tolerance=14
+
+Sending REPLAY 60...
+[PASS] REPLAY ACK: ack_received=True
+[PASS] REPLAY record count: received=60, expected=60
+[PASS] Replay record CRC: crc_errors=0, malformed=0
+[FAIL] Replay sequence continuity: expected=1942, received=1943, gap=1; expected=1945, received=1946, gap=1; expected=1949, received=1950, gap=1; expected=1952, received=1953, gap=1; expected=1959, received=1960, gap=1
+[FAIL] Replay ends at latest record: replay_last_seq=2014, live_last_seq=2015
+
+Sending ERASE...
+[PASS] ERASE ACK: ack_received=True
+Requesting final STATUS...
+[PASS] Final STATUS received: STATUS frame received
+Final STATUS:
+  state=0
+  sd_mounted=1
+  file_count=4
+  current_file=0
+  total_records=0
+  wrap_count=0
+  records_in_file=0
+[PASS] ERASE resets total_records: total_records=0
+[PASS] ERASE resets ring position: current_file=0, wrap_count=0, records_in_file=0
+[PASS] Device remains Idle after ERASE: state=0
+[PASS] SD remains mounted after ERASE: sd_mounted=1
+
+Summary
+PASS: Initial STATUS received - STATUS frame received
+PASS: Device starts in Idle - state=0
+PASS: SD card mounted - sd_mounted=1
+PASS: START ACK - ack_received=True
+PASS: START enters Recording - state=1 received
+PASS: Live record count - received=287, expected_range=240..362
+PASS: Live record CRC - crc_errors=0, malformed=0
+PASS: Live sequence continuity - no gaps
+PASS: STOP ACK - ack_received=True
+PASS: STOP enters Idle - state=0 received
+PASS: Streaming stops - trailing_records=0
+FAIL: Stored versus received records - stored_delta=236, live_received=288, difference=52, tolerance=14
+PASS: REPLAY ACK - ack_received=True
+PASS: REPLAY record count - received=60, expected=60
+PASS: Replay record CRC - crc_errors=0, malformed=0
+FAIL: Replay sequence continuity - expected=1942, received=1943, gap=1; expected=1945, received=1946, gap=1; expected=1949, received=1950, gap=1; expected=1952, received=1953, gap=1; expected=1959, received=1960, gap=1
+FAIL: Replay ends at latest record - replay_last_seq=2014, live_last_seq=2015
+PASS: ERASE ACK - ack_received=True
+PASS: Final STATUS received - STATUS frame received
+PASS: ERASE resets total_records - total_records=0
+PASS: ERASE resets ring position - current_file=0, wrap_count=0, records_in_file=0
+PASS: Device remains Idle after ERASE - state=0
+PASS: SD remains mounted after ERASE - sd_mounted=1
+
+Passed: 20
+Failed: 3
+Overall result: FAIL
