@@ -120,26 +120,14 @@ namespace kern::system {
 		for (;;) {
 			kern::protocol::Frame f{};
 
-<<<<<<< HEAD
-			if (link.receive(f, pdMS_TO_TICKS(10))) {
-				handler.dispatch(f);
-
-				while (link.poll(f)) {
-					handler.dispatch(f);
-				}
-			}
-		}
-=======
 	        while (link.poll(f)) {
 	        	handler.dispatch(f);
 	        }
 
 	        vTaskDelay(pdMS_TO_TICKS(10));
 	    }
->>>>>>> origin/phase5-lara
 	}
 
-	// check this, isn't working good
 	void Orchestrator::runSystemTask() {
 
 		TickType_t lastWake = xTaskGetTickCount();
@@ -156,8 +144,6 @@ namespace kern::system {
 
 	        if (halfSecondCounter >= 10) {
 	        	halfSecondCounter = 0;
-
-	        	hal::gpio::toggle(board::LED1_BLUE);
 	        }
 
 	        switch (sm.state()) {

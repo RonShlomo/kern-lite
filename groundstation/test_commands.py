@@ -5,7 +5,7 @@ from groundstation.commands import CommandSender
 from groundstation.frame import FrameType
 
 
-PORT = "COM9"
+PORT = "COM4"
 
 
 def wait_for_frames(link, seconds: float = 1.0) -> None:

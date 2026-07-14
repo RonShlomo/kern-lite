@@ -153,9 +153,18 @@ class Decoder:
             
             if crc32(crc_region) != received_crc:
                 return DecodeResult.CrcError
-            
+
             self._frame = Frame(type=FrameType(self._type), payload=bytes(self._payload))
-            
+
+            if self._frame.type == FrameType.Status and len(self._frame.payload) >= 14:
+                p = self._frame.payload
+                self._frame.state = p[0]
+                self._frame.sd_mounted = p[1]
+                self._frame.file_count = p[2]
+                self._frame.current_file = p[3]
+                self._frame.total_records, self._frame.wrap_count = struct.unpack_from("<II", p, 4)
+                self._frame.records_in_file = struct.unpack_from("<H", p, 12)[0]
+
             return DecodeResult.FrameReady
 
         self.reset()
