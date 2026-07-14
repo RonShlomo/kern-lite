@@ -18,7 +18,7 @@ namespace kern::system {
 	volatile float debugLm35TempC = 0.0f;
 
 	Orchestrator::Orchestrator()
-		: link(&huart2)
+	: link(&huart2)
 	{
 	}
 
@@ -26,7 +26,7 @@ namespace kern::system {
 	{
 		bus.init();
 		link.init();
-		handler.init(&link);
+		handler.init(&link, &sm, &box);
 		box.mount();
 		m_recSeq = box.newestSeq();
 
@@ -40,6 +40,11 @@ namespace kern::system {
 	void Orchestrator::runSensorTask()
 	{
 		for (;;) {
+			if (!sm.isLogging()) {
+				vTaskDelay(pdMS_TO_TICKS(100));
+				continue;
+			}
+
 			kern::storage::SensorRecord rec{};
 			uint8_t current_faults = 0;
 			uint8_t current_alerts = 0;
@@ -48,7 +53,7 @@ namespace kern::system {
 			rec.timestamp = HAL_GetTick() / 1000;
 			rec.ms = HAL_GetTick() % 1000;
 			rec.seq = ++m_recSeq;
-			rec.state = 0;
+			rec.state = static_cast<uint8_t>(sm.state());
 
 			// collect and process data
 			processAnalogSensors(rec, current_faults);
@@ -61,8 +66,8 @@ namespace kern::system {
 
 			// error detection (crc3 protocol)
 			rec.crc32 = kern::protocol::crc32(
-				reinterpret_cast<const uint8_t*>(&rec),
-				offsetof(kern::storage::SensorRecord, crc32)
+					reinterpret_cast<const uint8_t*>(&rec),
+					offsetof(kern::storage::SensorRecord, crc32)
 			);
 
 			// the record is now complete and verified. now we distribute this record to downstream consumers
@@ -92,17 +97,17 @@ namespace kern::system {
 
 	void Orchestrator::runCommsTask()
 	{
-	    for (;;) {
-	        kern::protocol::Frame f{};
+		for (;;) {
+			kern::protocol::Frame f{};
 
-	        if (link.receive(f, pdMS_TO_TICKS(10))) {
-	            handler.dispatch(f);
+			if (link.receive(f, pdMS_TO_TICKS(10))) {
+				handler.dispatch(f);
 
-	            while (link.poll(f)) {
-	                handler.dispatch(f);
-	            }
-	        }
-	    }
+				while (link.poll(f)) {
+					handler.dispatch(f);
+				}
+			}
+		}
 	}
 
 	void Orchestrator::runSystemTask() {

@@ -345,6 +345,8 @@ namespace kern::storage
 
 		f_unlink("0:META.BIN");
 		m_mounted = false;
+		std::memset(&m_meta, 0, sizeof(LogMeta));
+		m_newestSeq = 0;
 
 		// call mount() to create new files and zeroed metadata
 		return mount();
