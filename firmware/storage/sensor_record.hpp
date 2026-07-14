@@ -24,9 +24,9 @@ namespace kern::storage {
 #pragma pack(pop)
 	static_assert(sizeof(SensorRecord) == 32);
 	static_assert(offsetof(SensorRecord, crc32) == 28);
-	inline constexpr uint8_t kFaultLm35Range = 0x01;
-	inline constexpr uint8_t kFaultDhtTimeout = 0x02;
-	inline constexpr uint8_t kFaultDhtBadData = 0x04;
-	inline constexpr uint8_t kFaultLightStuck = 0x08;
-	inline constexpr uint8_t kFaultPotStuck = 0x10;
+	constexpr uint8_t kFaultLm35Range = 0x01;
+	constexpr uint8_t kFaultDhtTimeout = 0x02;
+	constexpr uint8_t kFaultDhtBadData = 0x04;
+	constexpr uint8_t kFaultLightStuck = 0x08;
+	constexpr uint8_t kFaultPotStuck = 0x10;
 }
