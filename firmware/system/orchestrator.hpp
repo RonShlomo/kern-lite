@@ -15,6 +15,7 @@
 #include "../sensors/potentiometer.hpp"
 #include "../sensors/dht11.hpp"
 #include "../sensors/buttons.hpp"
+#include <atomic>
 
 namespace kern::system {
 	class Orchestrator {
@@ -31,6 +32,10 @@ namespace kern::system {
 			return o;
 		}
 
+		bool storageIsIdle() const
+		{
+		    return (!m_sensorBusy.load() && bus.pendingCount() == 0 && !m_storageBusy.load());
+		}
 	private:
 		// helper functions
 		void processAnalogSensors(kern::storage::SensorRecord& rec, uint8_t& current_faults);
@@ -38,6 +43,8 @@ namespace kern::system {
 		void evaluateAlerts(uint8_t& current_alerts);
 		void transmitRecord(const kern::storage::SensorRecord& rec);
 
+		std::atomic<bool> m_storageBusy{false};
+		std::atomic<bool> m_sensorBusy{false};
 
 		recorder::StateMachine sm;
 		recorder::SensorBus bus;

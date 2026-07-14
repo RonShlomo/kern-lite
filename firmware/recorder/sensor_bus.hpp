@@ -2,38 +2,57 @@
 
 #include "../storage/sensor_record.hpp"
 #include "FreeRTOS.h"
-#include "semphr.h"
+#include "queue.h"
 
 namespace kern::recorder {
-	class SensorBus {
-	public:
-		void init()
-		{
-			m_mutex = xSemaphoreCreateMutexStatic(&m_mutexStorage);
-		}
 
-		void publish(const storage::SensorRecord& r)
-		{
-			if (m_mutex && xSemaphoreTake(m_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-				m_latest = r;
-				xSemaphoreGive(m_mutex);
-			}
-		}
+class SensorBus {
+public:
+    static constexpr UBaseType_t kQueueDepth = 32;
 
-		storage::SensorRecord latest() {
-			storage::SensorRecord r{};
+    void init()
+    {
+        m_queue = xQueueCreateStatic(
+            kQueueDepth,
+            sizeof(storage::SensorRecord),
+            m_queueBuffer,
+            &m_queueStorage
+        );
+    }
 
-			if (m_mutex && xSemaphoreTake(m_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-				r = m_latest;
-				xSemaphoreGive(m_mutex);
-			}
+    bool publish(const storage::SensorRecord& record)
+    {
+        if (m_queue == nullptr) {
+            return false;
+        }
 
-			return r;
-		}
+        return xQueueSend(m_queue, &record, pdMS_TO_TICKS(5)) == pdPASS;
+    }
 
-	private:
-		StaticSemaphore_t m_mutexStorage{};
-		SemaphoreHandle_t m_mutex = nullptr;
-		storage::SensorRecord m_latest{};
-	};
+    bool receive(storage::SensorRecord& record, TickType_t timeout)
+    {
+        if (m_queue == nullptr) {
+            return false;
+        }
+
+        return xQueueReceive( m_queue, &record, timeout) == pdPASS;
+    }
+
+    UBaseType_t pendingCount() const
+    {
+        if (m_queue == nullptr) {
+            return 0;
+        }
+
+        return uxQueueMessagesWaiting(m_queue);
+    }
+
+private:
+    StaticQueue_t m_queueStorage{};
+
+    uint8_t m_queueBuffer[ kQueueDepth * sizeof(storage::SensorRecord) ]{};
+
+    QueueHandle_t m_queue = nullptr;
+};
+
 }

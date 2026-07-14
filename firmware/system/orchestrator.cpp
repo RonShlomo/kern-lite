@@ -39,10 +39,12 @@ namespace kern::system {
 	{
 		for (;;) {
 
-			// only works on recording
+			m_sensorBusy.store(true);
+
 			if (!sm.isLogging()) {
-			    vTaskDelay(pdMS_TO_TICKS(100));
-			    continue;
+				m_sensorBusy.store(false);
+				vTaskDelay(pdMS_TO_TICKS(100));
+				continue;
 			}
 
 			kern::storage::SensorRecord rec{};
@@ -73,43 +75,55 @@ namespace kern::system {
 			// the record is now complete and verified. now we distribute this record to downstream consumers
 			// SensorBus: Internal RTOS bus (for the Storage Task to save to SD card).
 			// CommLink: External UART connection (for the Ground Station GUI).
-			bus.publish(rec);
-			transmitRecord(rec);
+			if (bus.publish(rec)) {
+			    transmitRecord(rec);
+			}
 
+			m_sensorBusy.store(false);
 			vTaskDelay(pdMS_TO_TICKS(100));
 		}
 	}
 
 	void Orchestrator::runStorageTask()
 	{
-		uint16_t lastWrittenSeq = 0;
-		uint8_t consecutiveWriteFailures = 0;
+		 uint8_t consecutiveWriteFailures = 0;
+		 storage::SensorRecord pendingRecord{};
+		 bool hasPendingRecord = false;
 
-		for (;;) {
-			// only writes on recording
-			if (!sm.isLogging()) {
-			    consecutiveWriteFailures = 0;
-			    vTaskDelay(pdMS_TO_TICKS(100));
-			    continue;
-			}
-			storage::SensorRecord copy = bus.latest();
-			if (lastWrittenSeq != copy.seq) {
-				const storage::StorageStatus status = box.writeRecord(copy);
+		 for (;;) {
+			 if (sm.isFault()) {
+				 vTaskDelay(pdMS_TO_TICKS(100));
+				 continue;
+			 }
 
-				if (status == storage::StorageStatus::Ok) {
-					lastWrittenSeq = copy.seq;
-			        consecutiveWriteFailures = 0;
-				} else {
-					++consecutiveWriteFailures;
+			 if (!hasPendingRecord) {
+				 if (!bus.receive(pendingRecord, pdMS_TO_TICKS(100))) {
+					 continue;
+				 }
 
-					if (consecutiveWriteFailures >= 3) {
-						sm.process(recorder::Event::SdFault);
-						consecutiveWriteFailures = 0;
-					}
-				}
-			}
-			vTaskDelay(pdMS_TO_TICKS(100));
-		}
+				 hasPendingRecord = true;
+				 m_storageBusy.store(true);
+			 }
+
+			 const storage::StorageStatus status =
+					 box.writeRecord(pendingRecord);
+
+			 if (status == storage::StorageStatus::Ok) {
+				 hasPendingRecord = false;
+				 m_storageBusy.store(false);
+				 consecutiveWriteFailures = 0;
+				 continue;
+			 }
+
+			 ++consecutiveWriteFailures;
+
+			 if (consecutiveWriteFailures >= 3) {
+				 sm.process(recorder::Event::SdFault);
+				 consecutiveWriteFailures = 0;
+			 }
+
+			 vTaskDelay(pdMS_TO_TICKS(100));
+		 }
 	}
 
 	void Orchestrator::runCommsTask()
