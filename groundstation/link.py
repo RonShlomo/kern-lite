@@ -3,8 +3,9 @@ import time
 from typing import Optional
 import serial
 import threading
-from groundstation.frame import Frame, encode, Decoder, DecodeResult, FrameType
+from groundstation.frame import Frame, encode, Decoder, DecodeResult, FrameType, NackCode
 from collections import deque
+import logging
 
 
 class ConnectionState(IntEnum):
@@ -133,3 +134,57 @@ class SerialLink:
         if self.cmd_count == 0:
             return 0.0
         return self.nack_count / self.cmd_count
+
+
+    # B5.3
+    logger = logging.getLogger("LinkDispatcher")
+    class FrameDispatcher:
+        def __init__(self, integrity_checker, telemetry_model, session, device_state, storage_model):
+            # Initializes the dispatcher with all the UI models and logic handlers.
+            self.integrity = integrity_checker
+            self.telemetry = telemetry_model
+            self.device_state = device_state
+            self.storgae = storage_model
+
+        def dispatch_frame(self, frame):
+            # Routes a valid  Frame object to the correct handling logic based on its type
+            # This function is called immediately after the decoder successfully reconstructs a frame
+            if frame.type == FrameType.Record:
+                # first, check if the record's internal CRC is corrupted
+                if not self.integrity.check_frame(frame):
+                    # If corrupted, the IntegrityChecker already logged a warning. We drop the packet.
+                    return
+
+                # if valid, pass the raw frame payload to the telemetry model to decode and display
+                record = self.telemetry.decode(frame.payload)
+                self.telemetry.ingest(record)
+
+                # save the binary record to our session file with the current PC timestamp
+                current_wall_time = time.time()
+                self.session.append_record(record, current_wall_time)
+
+                # Determine if this is a live stream or a replay based on the device state
+                if self.device_state.current_state == 1:
+                    self.storage.live_record_count += 1
+                else:
+                    self.storage.replay_record_count += 1
+
+            elif frame.type == FrameType.Status:
+                # Send the frame to both models so they can update their UI variables
+                self.device_state.update_from_status(frame)
+                self.storgae.update_from_status(frame)
+
+            # Handle incoming nacks (errors)
+            elif frame.type == FrameType.Nack:
+                # The payload of a NACK is exactly 1 byte representing the error code
+                if len(frame.payload) >= 1:
+                    error_code_value = frame.payload[0]
+                    try:
+                        # Convert the raw number into our human-readable Enum
+                        error_enum = NackCode(error_code_value)
+                        logger.error(f"Command Rejected! NACK received: {error_enum.name}")
+                        # Note: You would also update your Command Panel UI alert history here
+                    except ValueError:
+                        logger.error(f"Received unknown NACK code: {error_code_value}")
+
+
