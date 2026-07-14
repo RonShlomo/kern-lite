@@ -14,6 +14,7 @@
 #include "../sensors/photodiode.hpp"
 #include "../sensors/potentiometer.hpp"
 #include "../sensors/dht11.hpp"
+#include "../sensors/buttons.hpp"
 
 namespace kern::system {
 	class Orchestrator {
@@ -60,5 +61,6 @@ namespace kern::system {
 		kern::sensors::Photodiode m_sensorPhoto;
 		kern::sensors::Potentiometer m_sensorPot;
 		kern::sensors::Dht11 m_sensorDht11;
+		kern::sensors::Buttons m_buttons;
 	};
 }

@@ -31,6 +31,7 @@ namespace kern::system {
 		m_recSeq = box.newestSeq();
 
 
+		m_buttons.init();
 		// initialize DSP channels thresholds on system startup
 		chLm35.configure(kern::config::kThresholdLm35);
 		chPhoto.configure(kern::config::kThresholdPhoto);
@@ -40,9 +41,10 @@ namespace kern::system {
 	void Orchestrator::runSensorTask()
 	{
 		for (;;) {
+			// only works on recording
 			if (!sm.isLogging()) {
-				vTaskDelay(pdMS_TO_TICKS(100));
-				continue;
+			    vTaskDelay(pdMS_TO_TICKS(100));
+			    continue;
 			}
 
 			kern::storage::SensorRecord rec{};
@@ -74,6 +76,7 @@ namespace kern::system {
 			// SensorBus: Internal RTOS bus (for the Storage Task to save to SD card).
 			// CommLink: External UART connection (for the Ground Station GUI).
 			bus.publish(rec); // Uncomment when Storage Task is ready
+
 			transmitRecord(rec);
 
 			vTaskDelay(pdMS_TO_TICKS(100));
@@ -83,14 +86,31 @@ namespace kern::system {
 	void Orchestrator::runStorageTask()
 	{
 		uint16_t lastWrittenSeq = 0;
+		uint8_t consecutiveWriteFailures = 0;
 
 		for (;;) {
+			// only writes on recording
+			if (!sm.isLogging()) {
+			    consecutiveWriteFailures = 0;
+			    vTaskDelay(pdMS_TO_TICKS(100));
+			    continue;
+			}
 			storage::SensorRecord copy = bus.latest();
 			if (lastWrittenSeq != copy.seq) {
-				box.writeRecord(copy);
-				lastWrittenSeq = copy.seq;
-			}
+				const storage::StorageStatus status = box.writeRecord(copy);
 
+				if (status == storage::StorageStatus::Ok) {
+					lastWrittenSeq = copy.seq;
+			        consecutiveWriteFailures = 0;
+				} else {
+					++consecutiveWriteFailures;
+
+					if (consecutiveWriteFailures >= 3) {
+						sm.process(recorder::Event::SdFault);
+						consecutiveWriteFailures = 0;
+					}
+				}
+			}
 			vTaskDelay(pdMS_TO_TICKS(100));
 		}
 	}
@@ -100,6 +120,7 @@ namespace kern::system {
 		for (;;) {
 			kern::protocol::Frame f{};
 
+<<<<<<< HEAD
 			if (link.receive(f, pdMS_TO_TICKS(10))) {
 				handler.dispatch(f);
 
@@ -108,13 +129,59 @@ namespace kern::system {
 				}
 			}
 		}
+=======
+	        while (link.poll(f)) {
+	        	handler.dispatch(f);
+	        }
+
+	        vTaskDelay(pdMS_TO_TICKS(10));
+	    }
+>>>>>>> origin/phase5-lara
 	}
 
+	// check this, isn't working good
 	void Orchestrator::runSystemTask() {
+
+		TickType_t lastWake = xTaskGetTickCount();
+		uint8_t halfSecondCounter = 0;
+
+		hal::gpio::clear(board::LED1_BLUE);
+		hal::gpio::clear(board::RGB_G);
+		hal::gpio::clear(board::LED2_RED);
+
 		for (;;) {
-			hal::gpio::toggle(board::LED1_BLUE);
 			hal::watchdog::kick(hiwdg);
-			vTaskDelay(pdMS_TO_TICKS(1000));
+
+	        ++halfSecondCounter;
+
+	        if (halfSecondCounter >= 10) {
+	        	halfSecondCounter = 0;
+
+	        	hal::gpio::toggle(board::LED1_BLUE);
+	        }
+
+	        switch (sm.state()) {
+
+	        	case recorder::State::Idle:
+	        		hal::gpio::clear(board::RGB_G);
+	        		hal::gpio::clear(board::LED2_RED);
+	        		break;
+
+	        	case recorder::State::Recording:
+	        		hal::gpio::set(board::RGB_G);
+	        		hal::gpio::clear(board::LED2_RED);
+	        		break;
+
+	        	case recorder::State::Fault:
+	        		hal::gpio::clear(board::RGB_G);
+
+	        		if (halfSecondCounter == 0) {
+	        			hal::gpio::toggle(board::LED2_RED);
+	        		}
+	        		break;
+	        }
+
+	        vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(50));
 		}
 	}
 
