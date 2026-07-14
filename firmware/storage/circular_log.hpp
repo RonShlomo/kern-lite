@@ -7,12 +7,12 @@
 namespace kern::storage
 {
 
-	inline constexpr uint8_t LOG_FILE_COUNT = 4;
-	inline constexpr uint16_t RECORDS_PER_FILE = 256;
-	inline constexpr uint16_t META_FLUSH_EVERY_N = 16;
-	inline constexpr uint32_t ERASE_MAGIC = 0xDEADC0DEu;
-	inline constexpr uint32_t META_MAGIC = 0x4C4F4700u; // "LOG\0"
-	inline constexpr uint32_t META_VERSION = 1u;
+	constexpr uint8_t LOG_FILE_COUNT = 4;
+	constexpr uint16_t RECORDS_PER_FILE = 256;
+	constexpr uint16_t META_FLUSH_EVERY_N = 16;
+	constexpr uint32_t ERASE_MAGIC = 0xDEADC0DEu;
+	constexpr uint32_t META_MAGIC = 0x4C4F4700u; // "LOG\0"
+	constexpr uint32_t META_VERSION = 1u;
 
 #pragma pack(push, 1)
 	struct LogMeta
