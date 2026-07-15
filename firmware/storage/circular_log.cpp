@@ -87,8 +87,13 @@ namespace kern::storage
 			return StorageStatus::IoError;
 		}
 
-		// Open or create all 4 log files (LOG00.BIN to LOG03.BIN)
-		// do this now so we don't waste time opening files during fast sensor logging
+		// [Claude] changed: _FS_LOCK is configured to 2 (FATFS/Target/ffconf.h), so FatFs can
+		// only track 2 simultaneously open file objects across the whole volume. This loop used
+		// to leave all 4 log files open in m_files[]/m_filesOpen[] for the entire session, which
+		// alone blew that budget. It now just opens each file long enough to confirm it exists
+		// (or create it), then closes it immediately -- writeRecord(), replayNewest(), and
+		// recoverPosition() below now each open the one file they need on demand and close it
+		// before returning, so at most one of these four files is ever open at a time.
 		for (uint8_t i = 0; i < LOG_FILE_COUNT; ++i)
 		{
 			char filename[16];
@@ -97,14 +102,12 @@ namespace kern::storage
 
 			// FA_OPEN_ALWAYS flag means: if the file exists, open it. else, create it now
 			FRESULT res = f_open(&m_files[i], filename, FA_READ | FA_WRITE | FA_OPEN_ALWAYS);
-			if (res == FR_OK)
-			{
-				m_filesOpen[i] = true;
-			}
-			else
+			if (res != FR_OK)
 			{
 				return StorageStatus::IoError;
 			}
+
+			f_close(&m_files[i]);
 		}
 
 		// try to read the metadata bookmark from META.BIN
@@ -213,13 +216,19 @@ namespace kern::storage
 		uint16_t newest_index = 0;
 		bool found_any_valid = false;
 
-		// scan every slot in all 4 files
+		// [Claude] changed: opens each file one at a time (scan it, close it, move on) instead of
+		// assuming all 4 are already open in m_files[] -- see the note in mountLocked() above on
+		// why (_FS_LOCK 2).
 		for (uint8_t f = 0; f < LOG_FILE_COUNT; ++f)
 		{
-			if (m_filesOpen[f] == false)
+			char filename[16];
+			makeLogFilename(f, filename);
+
+			if (f_open(&m_files[f], filename, FA_READ | FA_OPEN_ALWAYS) != FR_OK)
 			{
 				continue;
 			}
+			m_filesOpen[f] = true;
 
 			for (uint16_t i = 0; i < RECORDS_PER_FILE; ++i)
 			{
@@ -246,6 +255,9 @@ namespace kern::storage
 					}
 				}
 			}
+
+			f_close(&m_files[f]);
+			m_filesOpen[f] = false;
 		}
 
 		// if we found valid data, set the write head one step after the newest record
@@ -285,8 +297,21 @@ namespace kern::storage
 		SensorRecord stored = r;
 		stored.crc32 = recordCrc(stored);
 
+		// [Claude] changed: opens the target file for this single write and closes it before
+		// returning, instead of writing into a handle left open since mount -- see the note in
+		// mountLocked() above on why (_FS_LOCK 2).
+		const uint8_t targetFile = m_meta.current_file;
+		char filename[16];
+		makeLogFilename(targetFile, filename);
+
+		if (f_open(&m_files[targetFile], filename, FA_READ | FA_WRITE | FA_OPEN_ALWAYS) != FR_OK)
+		{
+			return StorageStatus::IoError;
+		}
+		m_filesOpen[targetFile] = true;
+
 		// find the correct file and position
-		FIL *current_file = &m_files[m_meta.current_file];
+		FIL *current_file = &m_files[targetFile];
 		f_lseek(current_file, m_meta.write_index * sizeof(SensorRecord));
 
 		// write the 32 bytes to the SD card
@@ -294,12 +319,14 @@ namespace kern::storage
 
 		FRESULT write_status = f_write(current_file, &stored, sizeof(SensorRecord), &bytes_written);
 
+		f_sync(current_file);
+		f_close(current_file);
+		m_filesOpen[targetFile] = false;
+
 		if (write_status != FR_OK || bytes_written != sizeof(SensorRecord))
 		{
 			return StorageStatus::IoError;
 		}
-
-		f_sync(current_file);
 
 		// advance indexes
 		++m_meta.write_index;
@@ -354,12 +381,43 @@ namespace kern::storage
 		uint32_t global_write_pos = m_meta.current_file * RECORDS_PER_FILE + m_meta.write_index;
 		uint32_t start_pos = (global_write_pos - to_replay + total_capacity) % total_capacity;
 
+		// [Claude] changed: keeps at most one of the four files open at a time as the walk
+		// crosses file boundaries, closing the previous one before opening the next -- see the
+		// note in mountLocked() above on why (_FS_LOCK 2). Previously all 4 were already open in
+		// m_files[] from mount, so this loop could just index straight into them.
+		bool anyFileOpen = false;
+		uint8_t openFileIndex = 0;
+		StorageStatus result = StorageStatus::Ok;
+
 		// walk forward and send records
 		for (uint32_t step = 0; step < to_replay; ++step)
 		{
 			uint32_t current_pos = (start_pos + step) % total_capacity;
 			uint8_t file_index = current_pos / RECORDS_PER_FILE;
 			uint16_t rec_index = current_pos % RECORDS_PER_FILE;
+
+			if (!anyFileOpen || file_index != openFileIndex)
+			{
+				if (anyFileOpen)
+				{
+					f_close(&m_files[openFileIndex]);
+					m_filesOpen[openFileIndex] = false;
+					anyFileOpen = false;
+				}
+
+				char filename[16];
+				makeLogFilename(file_index, filename);
+
+				if (f_open(&m_files[file_index], filename, FA_READ | FA_OPEN_ALWAYS) != FR_OK)
+				{
+					result = StorageStatus::IoError;
+					break;
+				}
+
+				m_filesOpen[file_index] = true;
+				anyFileOpen = true;
+				openFileIndex = file_index;
+			}
 
 			SensorRecord rec;
 			UINT bytes_read;
@@ -369,7 +427,8 @@ namespace kern::storage
 
 			if (read_status != FR_OK || bytes_read != sizeof(SensorRecord))
 			{
-				return StorageStatus::IoError;
+				result = StorageStatus::IoError;
+				break;
 			}
 
 			// send the record via callback, if callback returns false, we stop
@@ -381,7 +440,13 @@ namespace kern::storage
 			}
 		}
 
-		return StorageStatus::Ok;
+		if (anyFileOpen)
+		{
+			f_close(&m_files[openFileIndex]);
+			m_filesOpen[openFileIndex] = false;
+		}
+
+		return result;
 	}
 
 	StorageStatus CircularLog::eraseAll(uint32_t magic)

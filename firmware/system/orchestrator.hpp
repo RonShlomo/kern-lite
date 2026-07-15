@@ -37,6 +37,10 @@ namespace kern::system {
 		void processDigitalSensors(kern::storage::SensorRecord& rec, uint8_t& current_faults);
 		void evaluateAlerts(uint8_t& current_alerts);
 		void transmitRecord(const kern::storage::SensorRecord& rec);
+		// [Claude] added: the actual DHT11 hardware poll, split out of processDigitalSensors()
+		// and called after bus.publish()/transmitRecord() in runSensorTask(). See the call site
+		// for why.
+		void pollDht11();
 
 
 		recorder::StateMachine sm;
@@ -50,6 +54,10 @@ namespace kern::system {
 		uint32_t m_dhtTickCount = 0;
 		float m_lastDhtTemp = 0.0f;
 		float m_lastDhtHum = 0.0f;
+		// [Claude] added: a DHT_TIMEOUT/DHT_BADDATA fault detected by pollDht11() is applied to
+		// the *next* record's fault_bits (see processDigitalSensors()), since the poll now runs
+		// after the record it would have applied to is already published.
+		uint8_t m_pendingDhtFault = 0;
 
 		// DSP channels parameterised with the window size from config
 		kern::dsp::Channel<kern::config::kDspWindow> chLm35;

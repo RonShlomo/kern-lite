@@ -47,39 +47,62 @@ namespace kern::system {
 				continue;
 			}
 
-			kern::storage::SensorRecord rec{};
-			uint8_t current_faults = 0;
-			uint8_t current_alerts = 0;
+			// [Claude] added: anchor to an absolute tick schedule for the duration of this
+			// Recording session instead of vTaskDelay's relative delay. vTaskDelay re-measures
+			// its 100ms wait from whenever the task happens to resume, so this task's real
+			// period silently drifts against the Storage task's independent 100ms timer. Reset
+			// fresh every time Recording starts so a long Idle period beforehand can't leave a
+			// stale reference that forces a burst of non-delaying catch-up iterations.
+			TickType_t lastWake = xTaskGetTickCount();
 
-			// when and where this specific record is collected
-			rec.timestamp = HAL_GetTick() / 1000;
-			rec.ms = HAL_GetTick() % 1000;
-			rec.seq = ++m_recSeq;
-			rec.state = static_cast<uint8_t>(sm.state());
+			while (sm.isLogging()) {
+				kern::storage::SensorRecord rec{};
+				uint8_t current_faults = 0;
+				uint8_t current_alerts = 0;
 
-			// collect and process data
-			processAnalogSensors(rec, current_faults);
-			processDigitalSensors(rec, current_faults);
-			evaluateAlerts(current_alerts);
+				// when and where this specific record is collected
+				rec.timestamp = HAL_GetTick() / 1000;
+				rec.ms = HAL_GetTick() % 1000;
+				rec.seq = ++m_recSeq;
+				rec.state = static_cast<uint8_t>(sm.state());
 
-			// store the aggregated error and warning flags into the record
-			rec.fault_bits = current_faults;
-			rec.alert_bits = current_alerts;
+				// collect and process data
+				processAnalogSensors(rec, current_faults);
+				processDigitalSensors(rec, current_faults);
+				evaluateAlerts(current_alerts);
 
-			// error detection (crc3 protocol)
-			rec.crc32 = kern::protocol::crc32(
-					reinterpret_cast<const uint8_t*>(&rec),
-					offsetof(kern::storage::SensorRecord, crc32)
-			);
+				// store the aggregated error and warning flags into the record
+				rec.fault_bits = current_faults;
+				rec.alert_bits = current_alerts;
 
-			// the record is now complete and verified. now we distribute this record to downstream consumers
-			// SensorBus: Internal RTOS bus (for the Storage Task to save to SD card).
-			// CommLink: External UART connection (for the Ground Station GUI).
-			bus.publish(rec); // Uncomment when Storage Task is ready
+				// error detection (crc3 protocol)
+				rec.crc32 = kern::protocol::crc32(
+						reinterpret_cast<const uint8_t*>(&rec),
+						offsetof(kern::storage::SensorRecord, crc32)
+				);
 
-			transmitRecord(rec);
+				// the record is now complete and verified. now we distribute this record to downstream consumers
+				// SensorBus: Internal RTOS bus (for the Storage Task to save to SD card).
+				// CommLink: External UART connection (for the Ground Station GUI).
+				bus.publish(rec); // Uncomment when Storage Task is ready
 
-			vTaskDelay(pdMS_TO_TICKS(100));
+				transmitRecord(rec);
+
+				// [Claude] changed: the DHT11 poll used to run inside processDigitalSensors()
+				// above, before bus.publish(). Dht11::read() blocks for ~18-25ms (its mandatory
+				// 18ms start pulse plus the bit-banged response), so on that one tick in twenty
+				// this record's publish into SensorBus's single slot landed ~20ms late. If the
+				// Storage task's independent, fixed-schedule read for that same window happened
+				// before the delayed publish, it saw the previous record and correctly skipped
+				// it -- but by its next read, this record had already been overwritten by the
+				// following one, permanently dropping it from storage. That's exactly the
+				// ~1-in-20 pattern (seq 240/260/280/300, etc.) the Phase 5 integration test kept
+				// reproducing. Running the poll here, after this record is already published and
+				// transmitted, removes that blocking call from the critical path.
+				pollDht11();
+
+				vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(100));
+			}
 		}
 	}
 
@@ -95,23 +118,36 @@ namespace kern::system {
 				vTaskDelay(pdMS_TO_TICKS(100));
 				continue;
 			}
-			storage::SensorRecord copy = bus.latest();
-			if (lastWrittenSeq != copy.seq) {
-				const storage::StorageStatus status = box.writeRecord(copy);
 
-				if (status == storage::StorageStatus::Ok) {
-					lastWrittenSeq = copy.seq;
-					consecutiveWriteFailures = 0;
-				} else {
-					++consecutiveWriteFailures;
+			// [Claude] added: same fix as runSensorTask() -- writeRecord() calls f_sync(), whose
+			// latency isn't fixed, so vTaskDelay's relative wait let this task's real period creep
+			// past the Sensor task's 100ms cadence. Once that drift exceeded one Sensor period,
+			// the Sensor task would publish a second record into SensorBus's single slot before
+			// this task read the first one, silently overwriting it -- the record loss the Phase 5
+			// integration test caught (live stream had zero gaps, but ~48 of 288 records never
+			// reached storage). vTaskDelayUntil keeps this loop on a fixed absolute grid so write
+			// latency no longer accumulates into the next wait.
+			TickType_t lastWake = xTaskGetTickCount();
 
-					if (consecutiveWriteFailures >= 3) {
-						sm.process(recorder::Event::SdFault);
+			while (sm.isLogging()) {
+				storage::SensorRecord copy = bus.latest();
+				if (lastWrittenSeq != copy.seq) {
+					const storage::StorageStatus status = box.writeRecord(copy);
+
+					if (status == storage::StorageStatus::Ok) {
+						lastWrittenSeq = copy.seq;
 						consecutiveWriteFailures = 0;
+					} else {
+						++consecutiveWriteFailures;
+
+						if (consecutiveWriteFailures >= 3) {
+							sm.process(recorder::Event::SdFault);
+							consecutiveWriteFailures = 0;
+						}
 					}
 				}
+				vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(100));
 			}
-			vTaskDelay(pdMS_TO_TICKS(100));
 		}
 	}
 
@@ -223,30 +259,44 @@ namespace kern::system {
 
 
 	// process digital sensors
-	// handles the DHT11 sensor instance,
-	// polled only once every 2 seconds to prevent blocking the FreeRTOS scheduler
+	// [Claude] changed: this used to also run the DHT11 hardware poll itself, every 20 ticks,
+	// before bus.publish() in runSensorTask(). That poll now happens in pollDht11(), called
+	// after publish/transmit -- see the note at that call site. This function now only applies
+	// whatever is already known: the cached last-known-good DHT reading, plus any
+	// DHT_TIMEOUT/DHT_BADDATA fault the *previous* tick's poll found (one-shot, cleared after
+	// being applied once).
 	void Orchestrator::processDigitalSensors(kern::storage::SensorRecord& rec, uint8_t& faults)
 	{
-		if (++m_dhtTickCount >= 20) {
-			m_dhtTickCount = 0;
-
-			float dhtT = 0.0f, dhtH = 0.0f;
-
-			auto status = m_sensorDht11.read(dhtT, dhtH);
-
-			if (status == kern::sensors::Dht11::Status::Timeout) {
-				faults |= kern::storage::kFaultDhtTimeout;
-			} else if (status == kern::sensors::Dht11::Status::CrcError) {
-				faults |= kern::storage::kFaultDhtBadData;
-			} else {
-				m_lastDhtTemp = dhtT;
-				m_lastDhtHum = dhtH;
-			}
-		}
+		faults |= m_pendingDhtFault;
+		m_pendingDhtFault = 0;
 
 		// write the last known good values (or 0.0f if never read)
 		rec.dht_temp_c = static_cast<int16_t>(m_lastDhtTemp * 10.0);
 		rec.dht_hum = static_cast<uint16_t>(m_lastDhtHum * 10.0);
+	}
+
+	// [Claude] added: the actual DHT11 hardware poll, split out of processDigitalSensors() (see
+	// its note) so it can run after this tick's record is already published/transmitted.
+	// Still polled once every 20 ticks (~2s), matching the original cadence.
+	void Orchestrator::pollDht11()
+	{
+		if (++m_dhtTickCount < 20) {
+			return;
+		}
+		m_dhtTickCount = 0;
+
+		float dhtT = 0.0f, dhtH = 0.0f;
+
+		auto status = m_sensorDht11.read(dhtT, dhtH);
+
+		if (status == kern::sensors::Dht11::Status::Timeout) {
+			m_pendingDhtFault = kern::storage::kFaultDhtTimeout;
+		} else if (status == kern::sensors::Dht11::Status::CrcError) {
+			m_pendingDhtFault = kern::storage::kFaultDhtBadData;
+		} else {
+			m_lastDhtTemp = dhtT;
+			m_lastDhtHum = dhtH;
+		}
 	}
 
 
