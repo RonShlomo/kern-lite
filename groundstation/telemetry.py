@@ -55,10 +55,31 @@ class RecordDecoder:
         return SensorRecord(*struct.unpack_from(RecordDecoder._FORMAT, payload))
 
 
+# hi/lo bit pair for each analog channel, one bit each for the DHT pair.
+# MUST match firmware A3.3 bit-for-bit -- verify with Member A like the
+# Day 1 CRC cross-vector.
+ALERT_LM35 = 0x01 | 0x02
+ALERT_LIGHT = 0x04 | 0x08
+ALERT_POT = 0x10 | 0x20
+ALERT_DHT_TEMP = 0x40
+ALERT_DHT_HUM = 0x80
+
+#  channel metadata (shared by chart.py, stats.py, export.py)
+# attribute = scaled property on SensorRecord above
+# alert mask DERIVED from the ALERT_* constants -- one truth, no drift.
+CHANNELS = {
+    'lm35': ('lm35_celsius', ALERT_LM35, '#8ecae6'), # powder blue
+    'light': ('light_normalized', ALERT_LIGHT, '#ffcb77'), # soft amber
+    'pot': ('pot_normalized', ALERT_POT, '#cdb4db'), # lilac
+    'dht_temp': ('dht_temp_celsius', ALERT_DHT_TEMP, '#ffafcc'), # blush pink
+    'dht_hum': ('dht_humidity', ALERT_DHT_HUM, '#95d5b2'), # mint
+}
+
+
 class ChannelAccumulator:
 
-    def __init__(self, alert_masks: int):
-        self.alert_masks = alert_masks
+    def __init__(self, alert_mask: int):
+        self.alert_mask = alert_mask
         self.n = 0
         self.min_val: float | None = None
         self.max_val: float | None = None
@@ -78,34 +99,26 @@ class ChannelAccumulator:
 
         self.mean += (value - self.mean) / self.n
 
-        active = bool(alert_bits & self.alert_masks)
+        active = bool(alert_bits & self.alert_mask)
 
         if active and not self._in_alert:
             self.alert_activations += 1
 
-        if active:
+        # Fence-post convention (matches C6.1): an interval counts as
+        # in-alert only if BOTH its endpoints were in alert. Records at
+        # t=0..4 with alert at t=1,2,3 -> spans t=1..3 -> 2 s, not 3.
+        if active and self._in_alert:
             self.time_in_alert_s += dt_s
 
         self._in_alert = active
-
-
-
-ALERT_LM35 = 0x01 | 0x02
-ALERT_LIGHT = 0x04 | 0x08
-ALERT_POT = 0x10 | 0x20
-ALERT_DHT_TEMP = 0x40
-ALERT_DHT_HUM = 0x80
 
 
 class TelemetryModel:
     def __init__(self):
         self.records: list[SensorRecord] = []
         self.channels = {
-            "lm35": ChannelAccumulator(ALERT_LM35),
-            "dht_temp": ChannelAccumulator(ALERT_DHT_TEMP),
-            "dht_hum": ChannelAccumulator(ALERT_DHT_HUM),
-            "light": ChannelAccumulator(ALERT_LIGHT),
-            "pot": ChannelAccumulator(ALERT_POT),
+            name: ChannelAccumulator(mask)
+            for name, (_attr, mask, _color) in CHANNELS.items()
         }
 
     def ingest(self, record: SensorRecord):
@@ -116,9 +129,19 @@ class TelemetryModel:
 
         self.records.append(record)
 
-        ab = record.alert_bits
-        self.channels["lm35"].update(record.lm35_celsius, ab, dt)
-        self.channels["dht_temp"].update(record.dht_temp_celsius, ab, dt)
-        self.channels["dht_hum"].update(record.dht_humidity, ab, dt)
-        self.channels["light"].update(record.light_normalized, ab, dt)
-        self.channels["pot"].update(record.pot_normalized, ab, dt)
+        for name, (attr, _mask, _color) in CHANNELS.items():
+            self.channels[name].update(
+                getattr(record, attr), record.alert_bits, dt)
+
+
+# alert thresholds: mirror of firmware system/config.hpp (A3.2)
+# Keep byte-for-byte in sync with Member A's ThresholdConfig constants
+# {lo, hi, hysteresis}. The chart draws lo/hi; hyst is the firmware's
+# release margin (alert clears only past lo+hyst / hi-hyst).
+THRESHOLDS = {
+    'lm35': {'lo': 10.0, 'hi': 40.0, 'hyst': 2.0}, # kThresholdLm35
+    'light': {'lo': 0.05, 'hi': 0.95, 'hyst': 0.05}, # kThresholdPhoto
+    'pot': {'lo': 0.02, 'hi': 0.98, 'hyst': 0.02}, # kThresholdPot
+    'dht_temp': {'lo': 5.0,  'hi': 45.0, 'hyst': 2.0}, # kThresholdDht11Temp
+    'dht_hum': {'lo': 10.0, 'hi': 90.0, 'hyst': 5.0}, # kThresholdDht11Hum
+}
