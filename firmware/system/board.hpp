@@ -9,11 +9,11 @@ namespace kern::board {
 		uint8_t n;
 	};
 
-	inline constexpr Pin LED1_BLUE {GPIOC, 9};
-	inline constexpr Pin LED2_RED {GPIOB, 8};
+	inline constexpr Pin LED1_BLUE {GPIOC, 9};  // LEFT 1
+	inline constexpr Pin LED2_RED {GPIOB, 8};   // LEFT 2
 	inline constexpr Pin RGB_R {GPIOC, 7};
-	inline constexpr Pin RGB_G {GPIOC, 6};
-	inline constexpr Pin RGB_B {GPIOC, 8};
+	inline constexpr Pin RGB_G {GPIOC, 6};      // RIGHT 2
+	inline constexpr Pin RGB_B {GPIOC, 8};		// RIGHT 1
 	inline constexpr Pin SD_CS {GPIOB, 6};
 	inline constexpr Pin DHT_DATA {GPIOB, 5};
 	inline constexpr Pin SW1 {GPIOA, 10};

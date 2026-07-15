@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../protocol/frame.hpp"
-#include "../protocol/frame.hpp"
 #include "../storage/circular_log.hpp"
 #include "state_machine.hpp"
 

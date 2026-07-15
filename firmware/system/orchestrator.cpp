@@ -28,6 +28,7 @@ namespace kern::system {
 		link.init();
 		handler.init(&link, &sm, &box);
 
+		m_buttons.init();
 		// initialize DSP channels thresholds on system startup
 		chLm35.configure(kern::config::kThresholdLm35);
 		chPhoto.configure(kern::config::kThresholdPhoto);
@@ -37,6 +38,15 @@ namespace kern::system {
 	void Orchestrator::runSensorTask()
 	{
 		for (;;) {
+
+			m_sensorBusy.store(true);
+
+			if (!sm.isLogging()) {
+				m_sensorBusy.store(false);
+				vTaskDelay(pdMS_TO_TICKS(100));
+				continue;
+			}
+
 			kern::storage::SensorRecord rec{};
 			uint8_t current_faults = 0;
 			uint8_t current_alerts = 0;
@@ -45,7 +55,7 @@ namespace kern::system {
 			rec.timestamp = HAL_GetTick() / 1000;
 			rec.ms = HAL_GetTick() % 1000;
 			rec.seq = ++m_recSeq;
-			rec.state = 0;
+			rec.state = static_cast<uint8_t>(sm.state());
 
 			// collect and process data
 			processAnalogSensors(rec, current_faults);
@@ -65,26 +75,55 @@ namespace kern::system {
 			// the record is now complete and verified. now we distribute this record to downstream consumers
 			// SensorBus: Internal RTOS bus (for the Storage Task to save to SD card).
 			// CommLink: External UART connection (for the Ground Station GUI).
-			// bus.publish(rec); // Uncomment when Storage Task is ready
-			transmitRecord(rec);
+			if (bus.publish(rec)) {
+			    transmitRecord(rec);
+			}
 
+			m_sensorBusy.store(false);
 			vTaskDelay(pdMS_TO_TICKS(100));
 		}
 	}
 
 	void Orchestrator::runStorageTask()
 	{
-		uint16_t lastWrittenSeq = 0;
+		 uint8_t consecutiveWriteFailures = 0;
+		 storage::SensorRecord pendingRecord{};
+		 bool hasPendingRecord = false;
 
-		for (;;) {
-			storage::SensorRecord copy = bus.latest();
-			if (lastWrittenSeq != copy.seq) {
-				box.writeRecord(copy);
-				lastWrittenSeq = copy.seq;
-			}
+		 for (;;) {
+			 if (sm.isFault()) {
+				 vTaskDelay(pdMS_TO_TICKS(100));
+				 continue;
+			 }
 
-			vTaskDelay(pdMS_TO_TICKS(100));
-		}
+			 if (!hasPendingRecord) {
+				 if (!bus.receive(pendingRecord, pdMS_TO_TICKS(100))) {
+					 continue;
+				 }
+
+				 hasPendingRecord = true;
+				 m_storageBusy.store(true);
+			 }
+
+			 const storage::StorageStatus status =
+					 box.writeRecord(pendingRecord);
+
+			 if (status == storage::StorageStatus::Ok) {
+				 hasPendingRecord = false;
+				 m_storageBusy.store(false);
+				 consecutiveWriteFailures = 0;
+				 continue;
+			 }
+
+			 ++consecutiveWriteFailures;
+
+			 if (consecutiveWriteFailures >= 3) {
+				 sm.process(recorder::Event::SdFault);
+				 consecutiveWriteFailures = 0;
+			 }
+
+			 vTaskDelay(pdMS_TO_TICKS(100));
+		 }
 	}
 
 	void Orchestrator::runCommsTask()
@@ -92,21 +131,57 @@ namespace kern::system {
 	    for (;;) {
 	        kern::protocol::Frame f{};
 
-	        if (link.receive(f, pdMS_TO_TICKS(10))) {
-	            handler.dispatch(f);
-
-	            while (link.poll(f)) {
-	                handler.dispatch(f);
-	            }
+	        while (link.poll(f)) {
+	        	handler.dispatch(f);
 	        }
+
+	        vTaskDelay(pdMS_TO_TICKS(10));
 	    }
 	}
 
+	// check this, isn't working good
 	void Orchestrator::runSystemTask() {
+
+		TickType_t lastWake = xTaskGetTickCount();
+		uint8_t halfSecondCounter = 0;
+
+		hal::gpio::clear(board::LED1_BLUE);
+		hal::gpio::clear(board::RGB_G);
+		hal::gpio::clear(board::LED2_RED);
+
 		for (;;) {
-			hal::gpio::toggle(board::LED1_BLUE);
 			hal::watchdog::kick(hiwdg);
-			vTaskDelay(pdMS_TO_TICKS(1000));
+
+	        ++halfSecondCounter;
+
+	        if (halfSecondCounter >= 10) {
+	        	halfSecondCounter = 0;
+
+	        	hal::gpio::toggle(board::LED1_BLUE);
+	        }
+
+	        switch (sm.state()) {
+
+	        	case recorder::State::Idle:
+	        		hal::gpio::clear(board::RGB_G);
+	        		hal::gpio::clear(board::LED2_RED);
+	        		break;
+
+	        	case recorder::State::Recording:
+	        		hal::gpio::set(board::RGB_G);
+	        		hal::gpio::clear(board::LED2_RED);
+	        		break;
+
+	        	case recorder::State::Fault:
+	        		hal::gpio::clear(board::RGB_G);
+
+	        		if (halfSecondCounter == 0) {
+	        			hal::gpio::toggle(board::LED2_RED);
+	        		}
+	        		break;
+	        }
+
+	        vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(50));
 		}
 	}
 
