@@ -47,17 +47,8 @@ namespace kern::system {
 				continue;
 			}
 
-			// [Claude] added: anchor to an absolute tick schedule for the duration of this
-			// Recording session instead of vTaskDelay's relative delay. vTaskDelay re-measures
-			// its 100ms wait from whenever the task happens to resume, so this task's real
-			// period silently drifts against the Storage task's independent 100ms timer. Reset
-			// fresh every time Recording starts so a long Idle period beforehand can't leave a
-			// stale reference that forces a burst of non-delaying catch-up iterations.
 			TickType_t lastWake = xTaskGetTickCount();
 
-			// [Claude] added: clear any fault_bits left over from a previous Recording session
-			// (or from before the first record of this one is computed below), so the LED can't
-			// briefly show a blink for a fault that's no longer real.
 			m_lastFaultBits = 0;
 
 			while (sm.isLogging()) {
@@ -80,9 +71,6 @@ namespace kern::system {
 				rec.fault_bits = current_faults;
 				rec.alert_bits = current_alerts;
 
-				// [Claude] added: mirror fault_bits to where runSystemTask's LED logic can see
-				// it -- see the member declaration in orchestrator.hpp for why a plain volatile
-				// byte is enough here.
 				m_lastFaultBits = current_faults;
 
 				// error detection (crc3 protocol)
@@ -98,13 +86,6 @@ namespace kern::system {
 
 				transmitRecord(rec);
 
-				// [Claude] changed: the DHT11 poll used to run inside processDigitalSensors()
-				// above, before bus.publish(). Dht11::read() blocks for ~18-25ms (its mandatory
-				// 18ms start pulse plus the bit-banged response), so on that one tick in twenty
-				// this record's publish landed ~20ms late. Running the poll here, after this
-				// record is already published and transmitted, removes that blocking call from
-				// the critical path -- and SensorBus queuing (see sensor_bus.hpp) means even a
-				// late publish no longer risks overwriting a record Storage hasn't read yet.
 				pollDht11();
 
 				vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(100));
@@ -214,11 +195,6 @@ namespace kern::system {
 				break;
 
 			case recorder::State::Recording:
-				// [Claude] changed: was an unconditional solid green. Spec calls for blinking
-				// green when fault_bits is set (a sensor fault, distinct from the SD-write-fail
-				// path that drives the Fault *state* below) -- same 500ms toggle cadence as the
-				// Fault LED2_RED blink, just on RGB_G. Falls back to solid the instant
-				// m_lastFaultBits clears, regardless of blink phase.
 				if (m_lastFaultBits != 0) {
 					if (halfSecondCounter == 0) {
 						hal::gpio::toggle(board::RGB_G);
@@ -280,12 +256,6 @@ namespace kern::system {
 
 
 	// process digital sensors
-	// [Claude] changed: this used to also run the DHT11 hardware poll itself, every 20 ticks,
-	// before bus.publish() in runSensorTask(). That poll now happens in pollDht11(), called
-	// after publish/transmit -- see the note at that call site. This function now only applies
-	// whatever is already known: the cached last-known-good DHT reading, plus any
-	// DHT_TIMEOUT/DHT_BADDATA fault the *previous* tick's poll found (one-shot, cleared after
-	// being applied once).
 	void Orchestrator::processDigitalSensors(kern::storage::SensorRecord& rec, uint8_t& faults)
 	{
 		faults |= m_pendingDhtFault;
@@ -296,9 +266,6 @@ namespace kern::system {
 		rec.dht_hum = static_cast<uint16_t>(m_lastDhtHum * 10.0);
 	}
 
-	// [Claude] added: the actual DHT11 hardware poll, split out of processDigitalSensors() (see
-	// its note) so it can run after this tick's record is already published/transmitted.
-	// Still polled once every 20 ticks (~2s), matching the original cadence.
 	void Orchestrator::pollDht11()
 	{
 		if (++m_dhtTickCount < 20) {

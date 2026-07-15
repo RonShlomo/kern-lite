@@ -2,9 +2,6 @@
 
 #include "sensor_record.hpp"
 #include "ff.h" // Required for FATFS and FIL types
-// [Claude] added: FreeRTOS.h/semphr.h declare the static-mutex types (StaticSemaphore_t,
-// SemaphoreHandle_t) and primitives (xSemaphoreCreateMutexStatic/Take/Give) used below to
-// serialize access to this object across the Sensor/Storage task and the Comms/System tasks.
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include <cstdint>
@@ -49,11 +46,8 @@ namespace kern::storage
 
 	using RecordCb = bool (*)(const SensorRecord &, void *ctx);
 
-	// [Claude] added: a single, lock-consistent view of the fields CommandHandler::sendStatus()
-	// needs. Previously sendStatus() called currentFile()/writeIndex()/totalRecords()/
-	// wrapCount()/isMounted() as five separate unlocked reads, which could observe a torn mix
-	// of pre-wrap and post-wrap values if the Storage task was mid-writeRecord() at that exact
-	// instant. snapshot() takes the same mutex writeRecord() takes, so every field it returns
+	// a single, lock-consistent view of the fields CommandHandler::sendStatus() needs.
+	// snapshot() takes the same mutex writeRecord() takes, so every field it returns
 	// reflects one consistent point in time.
 	struct StatusSnapshot
 	{
@@ -75,7 +69,6 @@ namespace kern::storage
 		StorageStatus eraseAll(uint32_t magic);
 		StorageStatus flushMeta();
 
-		// [Claude] added: thread-safe replacement for reading multiple STATUS fields individually.
 		StatusSnapshot snapshot();
 
 		uint16_t newestSeq() const { return m_newestSeq; }
@@ -85,13 +78,6 @@ namespace kern::storage
 		uint16_t writeIndex() const { return m_meta.write_index; }
 		bool isMounted() const { return m_mounted; }
 
-		// [Claude] added: A6.1 fault-recovery diagnosis -- surfaces exactly what f_mount()
-		// returns on each mount/remount attempt, and how many attempts have happened, over the
-		// wire via sendStatus(). Added because live-debugging this (breakpoints in
-		// user_diskio_spi.c) turned out to perturb the SD subsystem's behavior itself, making
-		// debugger-based traces unreliable. volatile: written by whichever task calls
-		// mount()/mountLocked() (Storage task during Fault retries, or startup), read from the
-		// Comms/System task via sendStatus(); single-word members so no lock is needed.
 		uint32_t mountAttempts() const { return m_mountAttempts; }
 		uint8_t lastMountFResult() const { return m_lastMountFResult; }
 
@@ -101,13 +87,7 @@ namespace kern::storage
 		StorageStatus recoverPosition();
 		uint32_t metaCrc(const LogMeta &m);
 		uint32_t recordCrc(const SensorRecord &r);
-		// [Claude] added: mount()'s original body, extracted verbatim so eraseAll() can re-run
-		// it while already holding the lock, without taking the (non-recursive) mutex twice
-		// from the same task -- that would deadlock.
 		StorageStatus mountLocked();
-		// [Claude] added: lazily creates the static mutex on first use (mount()/writeRecord()/etc.
-		// are all reachable before any explicit "init()" step exists on this class). Safe to call
-		// every time; it only creates the semaphore once.
 		void ensureMutexCreated();
 
 		uint16_t m_newestSeq = 0;
@@ -121,10 +101,6 @@ namespace kern::storage
 		volatile uint32_t m_mountAttempts = 0;
 		volatile uint8_t m_lastMountFResult = 0;
 
-		// [Claude] added: guards every method that touches m_meta or the SD card. FatFs/SPI1 is a
-		// single shared peripheral, so without this, the Sensor/Storage task and the Comms/System
-		// task (via CommandHandler's flushMeta()/replayNewest()/eraseAll() calls) could issue
-		// concurrent FatFs calls and interleave SPI transactions, not just read stale fields.
 		StaticSemaphore_t m_mutexBuffer{};
 		SemaphoreHandle_t m_mutex = nullptr;
 	};

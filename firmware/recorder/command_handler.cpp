@@ -51,12 +51,6 @@ void CommandHandler::sendStatus()
     out.type = protocol::FrameType::Status;
     out.len = 14;
 
-    // [Claude] changed: was 5 separate unlocked getter calls (totalRecords()/wrapCount()/
-    // writeIndex()/isMounted()/currentFile()), each reading m_meta independently. If the
-    // Storage task was mid-writeRecord() at that moment (e.g. right in the middle of a file/
-    // wrap advance), those separate reads could return an inconsistent mix of pre- and post-
-    // advance fields. snapshot() takes the CircularLog mutex once and returns all of them
-    // together, so this STATUS frame always reflects one consistent instant.
     const storage::StatusSnapshot snap = m_circularLog->snapshot();
     const uint32_t totalRecords = snap.totalRecords;
     const uint32_t wrapCount = snap.wrapCount;
@@ -66,14 +60,12 @@ void CommandHandler::sendStatus()
     out.payload[0] = static_cast<uint8_t>(m_stateMachine->state());
 
     // [1] sd_mounted
-    // [Claude] changed: read from the snapshot instead of a separate m_circularLog->isMounted() call.
     out.payload[1] =  snap.mounted ? 1u : 0u;
 
     // [2] configured file count
     out.payload[2] = storage::LOG_FILE_COUNT;
 
     // [3] current_file
-    // [Claude] changed: read from the snapshot instead of a separate m_circularLog->currentFile() call.
     out.payload[3] = snap.currentFile;
 
     // [4..7] total_records: uint32 little-endian

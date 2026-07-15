@@ -12,25 +12,14 @@ namespace kern::storage
 
 	namespace
 	{
-		// [Claude] added: RAII helper so every locked method releases the mutex on every return
-		// path (there are several early returns below) without needing to remember to call
-		// xSemaphoreGive() before each one.
 		class ScopedLock
 		{
 		public:
-			// [Claude] changed: was xSemaphoreTake(m_sem, portMAX_DELAY) -- an unbounded wait.
-			// runSystemTask() calls flushMeta() (button short-press) and snapshot() (via
-			// sendStatus(), every 5s heartbeat) directly in its loop, after its IWDG kick. If the
-			// Storage task ever held this mutex through a stalled SD write, that unbounded wait
-			// could block the System task past the ~4s hardware IWDG timeout with no further kick
-			// in between. Bounding the wait means every caller either gets the lock or gets back
-			// control (and locked() == false) well inside that budget.
 			explicit ScopedLock(SemaphoreHandle_t sem) : m_sem(sem)
 			{
 				m_locked = xSemaphoreTake(m_sem, pdMS_TO_TICKS(kern::config::kStorageLockTimeoutMs)) == pdTRUE;
 			}
 
-			// [Claude] changed: only give back a lock this guard actually took.
 			~ScopedLock()
 			{
 				if (m_locked) {
@@ -38,11 +27,9 @@ namespace kern::storage
 				}
 			}
 
-			// [Claude] added: this guard owns a lock; copying it would double-release.
 			ScopedLock(const ScopedLock &) = delete;
 			ScopedLock &operator=(const ScopedLock &) = delete;
 
-			// [Claude] added: callers must check this before touching any shared state.
 			bool locked() const { return m_locked; }
 
 		private:
@@ -51,8 +38,6 @@ namespace kern::storage
 		};
 	} // namespace
 
-	// [Claude] added: creates the static mutex on first use. Called at the top of every public
-	// method below, before constructing a ScopedLock.
 	void CircularLog::ensureMutexCreated()
 	{
 		if (m_mutex == nullptr)
@@ -81,16 +66,12 @@ namespace kern::storage
 
 	StorageStatus CircularLog::mount()
 	{
-		// [Claude] added: create-if-needed the mutex, then hold it for the whole mount sequence
-		// so it can't interleave with a writeRecord()/flushMeta()/replayNewest()/eraseAll() call
-		// running on another task.
 		ensureMutexCreated();
 		ScopedLock guard(m_mutex);
 		if (!guard.locked()) {
 			return StorageStatus::IoError;
 		}
-		// [Claude] added: the actual mount logic now lives in mountLocked() (unchanged below,
-		// just moved) so eraseAll() can call it directly while already holding this same lock.
+
 		return mountLocked();
 	}
 
@@ -106,13 +87,6 @@ namespace kern::storage
 			return StorageStatus::IoError;
 		}
 
-		// [Claude] changed: _FS_LOCK is configured to 2 (FATFS/Target/ffconf.h), so FatFs can
-		// only track 2 simultaneously open file objects across the whole volume. This loop used
-		// to leave all 4 log files open in m_files[]/m_filesOpen[] for the entire session, which
-		// alone blew that budget. It now just opens each file long enough to confirm it exists
-		// (or create it), then closes it immediately -- writeRecord(), replayNewest(), and
-		// recoverPosition() below now each open the one file they need on demand and close it
-		// before returning, so at most one of these four files is ever open at a time.
 		for (uint8_t i = 0; i < LOG_FILE_COUNT; ++i)
 		{
 			char filename[16];
@@ -235,9 +209,6 @@ namespace kern::storage
 		uint16_t newest_index = 0;
 		bool found_any_valid = false;
 
-		// [Claude] changed: opens each file one at a time (scan it, close it, move on) instead of
-		// assuming all 4 are already open in m_files[] -- see the note in mountLocked() above on
-		// why (_FS_LOCK 2).
 		for (uint8_t f = 0; f < LOG_FILE_COUNT; ++f)
 		{
 			char filename[16];
@@ -307,9 +278,6 @@ namespace kern::storage
 	// write record (save data to the SD card)
 	StorageStatus CircularLog::writeRecord(const SensorRecord &r)
 	{
-		// [Claude] added: the Storage task calls this every ~100ms while Recording; take the
-		// same lock CMD_STOP/short-press flushMeta() and CMD_STATUS's snapshot() use, so a
-		// write can never interleave with a metadata flush or a status read from another task.
 		ensureMutexCreated();
 		ScopedLock guard(m_mutex);
 		if (!guard.locked()) {
@@ -319,9 +287,6 @@ namespace kern::storage
 		SensorRecord stored = r;
 		stored.crc32 = recordCrc(stored);
 
-		// [Claude] changed: opens the target file for this single write and closes it before
-		// returning, instead of writing into a handle left open since mount -- see the note in
-		// mountLocked() above on why (_FS_LOCK 2).
 		const uint8_t targetFile = m_meta.current_file;
 		char filename[16];
 		makeLogFilename(targetFile, filename);
@@ -382,10 +347,6 @@ namespace kern::storage
 	// replay newest (send history to python)
 	StorageStatus CircularLog::replayNewest(uint32_t n, RecordCb cb, void *ctx)
 	{
-		// [Claude] added: REPLAY is only dispatched while Idle, so by FSM construction it
-		// shouldn't overlap a Recording-only writeRecord() call -- but it still reads the same
-		// m_meta/m_files state flushMeta() (short-press, or a queued CMD_STOP) can touch, so it
-		// takes the same lock rather than relying on that invariant never changing.
 		ensureMutexCreated();
 		ScopedLock guard(m_mutex);
 		if (!guard.locked()) {
@@ -406,10 +367,6 @@ namespace kern::storage
 		uint32_t global_write_pos = m_meta.current_file * RECORDS_PER_FILE + m_meta.write_index;
 		uint32_t start_pos = (global_write_pos - to_replay + total_capacity) % total_capacity;
 
-		// [Claude] changed: keeps at most one of the four files open at a time as the walk
-		// crosses file boundaries, closing the previous one before opening the next -- see the
-		// note in mountLocked() above on why (_FS_LOCK 2). Previously all 4 were already open in
-		// m_files[] from mount, so this loop could just index straight into them.
 		bool anyFileOpen = false;
 		uint8_t openFileIndex = 0;
 		StorageStatus result = StorageStatus::Ok;
@@ -476,8 +433,6 @@ namespace kern::storage
 
 	StorageStatus CircularLog::eraseAll(uint32_t magic)
 	{
-		// [Claude] added: ERASE is Idle-only, so it can't race a writeRecord(), but it does race
-		// STATUS reads (any state) and it must not interleave with flushMeta() either.
 		ensureMutexCreated();
 		ScopedLock guard(m_mutex);
 		if (!guard.locked()) {
@@ -508,17 +463,11 @@ namespace kern::storage
 		std::memset(&m_meta, 0, sizeof(LogMeta));
 		m_newestSeq = 0;
 
-		// [Claude] changed: call mountLocked() instead of mount() -- this method already holds
-		// the mutex above, and mount() would try to take it again (this mutex is non-recursive,
-		// so that call would deadlock this task against itself).
 		return mountLocked();
 	}
 
 	StorageStatus CircularLog::flushMeta()
 	{
-		// [Claude] added: this is the method at the center of the race we discussed -- CMD_STOP
-		// and the short-press handler both call flushMeta() while the Storage task may still be
-		// mid-writeRecord() on another task, so both now go through the same lock.
 		ensureMutexCreated();
 		ScopedLock guard(m_mutex);
 		if (!guard.locked()) {
@@ -531,19 +480,13 @@ namespace kern::storage
 	    return writeMeta();
 	}
 
-	// [Claude] added: single-lock read of every field CommandHandler::sendStatus() needs, so a
-	// STATUS frame can no longer be built from a torn mix of pre-wrap/post-wrap values.
 	StatusSnapshot CircularLog::snapshot()
 	{
 		ensureMutexCreated();
 		ScopedLock guard(m_mutex);
 
 		StatusSnapshot s{};
-		// [Claude] added: on a timed-out lock (see ScopedLock), report not-mounted with
-		// everything else zeroed rather than reading m_meta unlocked. This only fires while the
-		// Storage task is pathologically stuck on an SD op past kStorageLockTimeoutMs; the
-		// heartbeat calling this must return promptly either way so runSystemTask's IWDG kick
-		// isn't starved.
+
 		if (!guard.locked()) {
 			return s;
 		}
