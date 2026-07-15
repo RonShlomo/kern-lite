@@ -1,5 +1,6 @@
 #include "circular_log.hpp"
 #include "../protocol/crc32.hpp"
+#include "../system/config.hpp" // kStorageLockTimeoutMs
 
 #include <cstdio>
 #include <cstring>
@@ -17,25 +18,36 @@ namespace kern::storage
 		class ScopedLock
 		{
 		public:
-			// [Claude] added: blocks (forever) until the mutex is free, mirroring the
-			// xSemaphoreTake(..., portMAX_DELAY) pattern already used in comm_link.cpp.
+			// [Claude] changed: was xSemaphoreTake(m_sem, portMAX_DELAY) -- an unbounded wait.
+			// runSystemTask() calls flushMeta() (button short-press) and snapshot() (via
+			// sendStatus(), every 5s heartbeat) directly in its loop, after its IWDG kick. If the
+			// Storage task ever held this mutex through a stalled SD write, that unbounded wait
+			// could block the System task past the ~4s hardware IWDG timeout with no further kick
+			// in between. Bounding the wait means every caller either gets the lock or gets back
+			// control (and locked() == false) well inside that budget.
 			explicit ScopedLock(SemaphoreHandle_t sem) : m_sem(sem)
 			{
-				xSemaphoreTake(m_sem, portMAX_DELAY);
+				m_locked = xSemaphoreTake(m_sem, pdMS_TO_TICKS(kern::config::kStorageLockTimeoutMs)) == pdTRUE;
 			}
 
-			// [Claude] added: releases the mutex when the guard goes out of scope.
+			// [Claude] changed: only give back a lock this guard actually took.
 			~ScopedLock()
 			{
-				xSemaphoreGive(m_sem);
+				if (m_locked) {
+					xSemaphoreGive(m_sem);
+				}
 			}
 
 			// [Claude] added: this guard owns a lock; copying it would double-release.
 			ScopedLock(const ScopedLock &) = delete;
 			ScopedLock &operator=(const ScopedLock &) = delete;
 
+			// [Claude] added: callers must check this before touching any shared state.
+			bool locked() const { return m_locked; }
+
 		private:
 			SemaphoreHandle_t m_sem;
+			bool m_locked;
 		};
 	} // namespace
 
@@ -74,6 +86,9 @@ namespace kern::storage
 		// running on another task.
 		ensureMutexCreated();
 		ScopedLock guard(m_mutex);
+		if (!guard.locked()) {
+			return StorageStatus::IoError;
+		}
 		// [Claude] added: the actual mount logic now lives in mountLocked() (unchanged below,
 		// just moved) so eraseAll() can call it directly while already holding this same lock.
 		return mountLocked();
@@ -81,8 +96,12 @@ namespace kern::storage
 
 	StorageStatus CircularLog::mountLocked()
 	{
+		++m_mountAttempts;
+
 		// Mount the FAT filesystem immediately
-		if (f_mount(&m_fatfs, "0:", 1) != FR_OK)
+		FRESULT mountResult = f_mount(&m_fatfs, "0:", 1);
+		m_lastMountFResult = static_cast<uint8_t>(mountResult);
+		if (mountResult != FR_OK)
 		{
 			return StorageStatus::IoError;
 		}
@@ -293,6 +312,9 @@ namespace kern::storage
 		// write can never interleave with a metadata flush or a status read from another task.
 		ensureMutexCreated();
 		ScopedLock guard(m_mutex);
+		if (!guard.locked()) {
+			return StorageStatus::IoError;
+		}
 		// copy the record because the input is const, and calculate its crc
 		SensorRecord stored = r;
 		stored.crc32 = recordCrc(stored);
@@ -366,6 +388,9 @@ namespace kern::storage
 		// takes the same lock rather than relying on that invariant never changing.
 		ensureMutexCreated();
 		ScopedLock guard(m_mutex);
+		if (!guard.locked()) {
+			return StorageStatus::IoError;
+		}
 		uint32_t total_capacity = LOG_FILE_COUNT * RECORDS_PER_FILE;
 
 		// limit n so we don't try to send records we don't have
@@ -455,6 +480,9 @@ namespace kern::storage
 		// STATUS reads (any state) and it must not interleave with flushMeta() either.
 		ensureMutexCreated();
 		ScopedLock guard(m_mutex);
+		if (!guard.locked()) {
+			return StorageStatus::IoError;
+		}
 		// verify magic == erase magic
 		if (magic != ERASE_MAGIC)
 		{
@@ -493,6 +521,9 @@ namespace kern::storage
 		// mid-writeRecord() on another task, so both now go through the same lock.
 		ensureMutexCreated();
 		ScopedLock guard(m_mutex);
+		if (!guard.locked()) {
+			return StorageStatus::IoError;
+		}
 	    if (!m_mounted) {
 	        return StorageStatus::NotMounted;
 	    }
@@ -508,6 +539,14 @@ namespace kern::storage
 		ScopedLock guard(m_mutex);
 
 		StatusSnapshot s{};
+		// [Claude] added: on a timed-out lock (see ScopedLock), report not-mounted with
+		// everything else zeroed rather than reading m_meta unlocked. This only fires while the
+		// Storage task is pathologically stuck on an SD op past kStorageLockTimeoutMs; the
+		// heartbeat calling this must return promptly either way so runSystemTask's IWDG kick
+		// isn't starved.
+		if (!guard.locked()) {
+			return s;
+		}
 		s.mounted = m_mounted;
 		s.currentFile = m_meta.current_file;
 		s.writeIndex = m_meta.write_index;

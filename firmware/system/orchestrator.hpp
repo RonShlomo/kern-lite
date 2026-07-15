@@ -51,6 +51,13 @@ namespace kern::system {
 
 		// state variables
 		uint16_t m_recSeq = 0;
+		// [Claude] added: A6.1 LED hardening -- runSensorTask() computes fault_bits fresh into
+		// each SensorRecord every tick, but nothing outside that function could see it, so
+		// runSystemTask's LED switch had no way to distinguish Recording+nominal from
+		// Recording+fault. Plain volatile byte, same pattern as the debug* globals above:
+		// single-word loads/stores are atomic on Cortex-M, so no mutex is needed for one task to
+		// write it and another to read it.
+		volatile uint8_t m_lastFaultBits = 0;
 		uint32_t m_dhtTickCount = 0;
 		float m_lastDhtTemp = 0.0f;
 		float m_lastDhtHum = 0.0f;

@@ -85,6 +85,16 @@ namespace kern::storage
 		uint16_t writeIndex() const { return m_meta.write_index; }
 		bool isMounted() const { return m_mounted; }
 
+		// [Claude] added: A6.1 fault-recovery diagnosis -- surfaces exactly what f_mount()
+		// returns on each mount/remount attempt, and how many attempts have happened, over the
+		// wire via sendStatus(). Added because live-debugging this (breakpoints in
+		// user_diskio_spi.c) turned out to perturb the SD subsystem's behavior itself, making
+		// debugger-based traces unreliable. volatile: written by whichever task calls
+		// mount()/mountLocked() (Storage task during Fault retries, or startup), read from the
+		// Comms/System task via sendStatus(); single-word members so no lock is needed.
+		uint32_t mountAttempts() const { return m_mountAttempts; }
+		uint8_t lastMountFResult() const { return m_lastMountFResult; }
+
 	private:
 		StorageStatus readMeta();
 		StorageStatus writeMeta();
@@ -107,6 +117,9 @@ namespace kern::storage
 		bool m_filesOpen[LOG_FILE_COUNT]{};
 		LogMeta m_meta{};
 		bool m_mounted = false;
+
+		volatile uint32_t m_mountAttempts = 0;
+		volatile uint8_t m_lastMountFResult = 0;
 
 		// [Claude] added: guards every method that touches m_meta or the SD card. FatFs/SPI1 is a
 		// single shared peripheral, so without this, the Sensor/Storage task and the Comms/System

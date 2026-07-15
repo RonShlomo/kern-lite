@@ -54,6 +54,10 @@ namespace kern::system {
 			// fresh every time Recording starts so a long Idle period beforehand can't leave a
 			// stale reference that forces a burst of non-delaying catch-up iterations.
 			TickType_t lastWake = xTaskGetTickCount();
+			// [Claude] added: clear any fault_bits left over from a previous Recording session
+			// (or from before the first record of this one is computed below), so the LED can't
+			// briefly show a blink for a fault that's no longer real.
+			m_lastFaultBits = 0;
 
 			while (sm.isLogging()) {
 				kern::storage::SensorRecord rec{};
@@ -74,6 +78,11 @@ namespace kern::system {
 				// store the aggregated error and warning flags into the record
 				rec.fault_bits = current_faults;
 				rec.alert_bits = current_alerts;
+
+				// [Claude] added: mirror fault_bits to where runSystemTask's LED logic can see
+				// it -- see the member declaration in orchestrator.hpp for why a plain volatile
+				// byte is enough here.
+				m_lastFaultBits = current_faults;
 
 				// error detection (crc3 protocol)
 				rec.crc32 = kern::protocol::crc32(
@@ -107,6 +116,23 @@ namespace kern::system {
 		uint8_t consecutiveWriteFailures = 0;
 
 		for (;;) {
+			// [Claude] added: A6.1 hardening -- entering Fault on the 3rd consecutive write
+			// failure was already wired up, but Event::FaultCleared (Fault -> Recording in
+			// state_machine.cpp) had no caller anywhere, so a Fault was permanent even after the
+			// SD card came back. This task owns all SD access, so it's the one that re-probes by
+			// calling mount() again; a successful remount fires FaultCleared and resumes
+			// Recording with the same m_recSeq sequence (a gap during the fault window, not a
+			// reset -- consistent with how a reboot gap is already handled).
+			if (sm.isFault()) {
+				if (box.mount() == storage::StorageStatus::Ok) {
+					sm.process(recorder::Event::FaultCleared);
+					handler.sendStatus();
+				}
+
+				vTaskDelay(pdMS_TO_TICKS(kern::config::kFaultRemountRetryMs));
+				continue;
+			}
+
 			// only writes on recording
 			if (!sm.isLogging()) {
 				consecutiveWriteFailures = 0;
@@ -200,7 +226,18 @@ namespace kern::system {
 				break;
 
 			case recorder::State::Recording:
-				hal::gpio::set(board::RGB_G);
+				// [Claude] changed: was an unconditional solid green. Spec calls for blinking
+				// green when fault_bits is set (a sensor fault, distinct from the SD-write-fail
+				// path that drives the Fault *state* below) -- same 500ms toggle cadence as the
+				// Fault LED2_RED blink, just on RGB_G. Falls back to solid the instant
+				// m_lastFaultBits clears, regardless of blink phase.
+				if (m_lastFaultBits != 0) {
+					if (halfSecondCounter == 0) {
+						hal::gpio::toggle(board::RGB_G);
+					}
+				} else {
+					hal::gpio::set(board::RGB_G);
+				}
 				hal::gpio::clear(board::LED2_RED);
 				break;
 

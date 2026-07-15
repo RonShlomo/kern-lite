@@ -347,6 +347,37 @@ void test_meta_crc_rejection()
     std::cout << "PASSED\n";
 }
 
+// [Claude] added: A6.1 watchdog-starvation audit. flushMeta()/snapshot() used to block
+// forever (xSemaphoreTake(..., portMAX_DELAY)) if another task held the CircularLog mutex,
+// which could starve runSystemTask's IWDG kick past the ~4s hardware timeout. Verifies every
+// caller now fails fast (IoError, or a safe zeroed/not-mounted snapshot) instead of hanging
+// when the lock can't be acquired -- see semphr.h's g_forceSemaphoreTakeFail.
+void test_lock_timeout_fails_fast()
+{
+    std::cout << "Running test_lock_timeout_fails_fast... ";
+
+    CircularLog log;
+    log.eraseAll(ERASE_MAGIC); // clean, mounted start
+    log.writeRecord(createDummyRecord(0));
+
+    g_forceSemaphoreTakeFail = true;
+
+    assert(log.writeRecord(createDummyRecord(1)) == StorageStatus::IoError);
+    assert(log.flushMeta() == StorageStatus::IoError);
+
+    StatusSnapshot snap = log.snapshot();
+    assert(snap.mounted == false);
+    assert(snap.totalRecords == 0);
+
+    g_forceSemaphoreTakeFail = false;
+
+    // lock works again afterwards -- this isn't a permanent trip
+    assert(log.writeRecord(createDummyRecord(2)) == StorageStatus::Ok);
+    assert(log.flushMeta() == StorageStatus::Ok);
+
+    std::cout << "PASSED\n";
+}
+
 int main()
 {
     std::cout << "--- Starting Storage Host Tests ---\n";
@@ -359,6 +390,7 @@ int main()
     test_erase_bad_magic();
     test_recovery_and_meta_corruption();
     test_meta_crc_rejection();
+    test_lock_timeout_fails_fast();
     std::cout << "--- All Tests Passed ---\n";
     return 0;
 }

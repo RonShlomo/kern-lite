@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./test_fsm)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(make clean *)",
+      "Bash(make)",
+      "Bash(./test_codec)",
+      "Bash(./test_dsp)",
+      "Bash(./test_storage)",
+      "Bash(g++ -std=c++17 -Wall -Wextra -Werror -g -I../../firmware -I. -o /tmp/tf test_fsm.cpp ../../firmware/protocol/crc32.cpp ../../firmware/protocol/codec.cpp ../../firmware/storage/circular_log.cpp ../../firmware/recorder/state_machine.cpp ../../firmware/recorder/command_handler.cpp)"
+    ]
+  }
+}

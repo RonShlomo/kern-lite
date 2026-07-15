@@ -1,23 +1,22 @@
 /**
  ******************************************************************************
-  * @file    user_diskio_spi.c
-  * @brief   This file contains the implementation of the user_diskio_spi FatFs
-  *          driver.
-  ******************************************************************************
-  * Portions copyright (C) 2014, ChaN, all rights reserved.
-  * Portions copyright (C) 2017, kiwih, all rights reserved.
-  *
-  * This software is a free software and there is NO WARRANTY.
-  * No restriction on use. You can use, modify and redistribute it for
-  * personal, non-profit or commercial products UNDER YOUR RESPONSIBILITY.
-  * Redistributions of source code must retain the above copyright notice.
-  *
-  ******************************************************************************
-  */
+ * @file    user_diskio_spi.c
+ * @brief   This file contains the implementation of the user_diskio_spi FatFs
+ *          driver.
+ ******************************************************************************
+ * Portions copyright (C) 2014, ChaN, all rights reserved.
+ * Portions copyright (C) 2017, kiwih, all rights reserved.
+ *
+ * This software is a free software and there is NO WARRANTY.
+ * No restriction on use. You can use, modify and redistribute it for
+ * personal, non-profit or commercial products UNDER YOUR RESPONSIBILITY.
+ * Redistributions of source code must retain the above copyright notice.
+ *
+ ******************************************************************************
+ */
 
 //This code was ported by kiwih from a copywrited (C) library written by ChaN
-//available at https://url.de.m.mimecastprotect.com/s/5tI7Cr2jW2f1mwLj9t7mWIQ?domain=elm-chan.org
-//(text at https://url.de.m.mimecastprotect.com/s/RhOeCvQn6QU2lOMgXHXbuqi?domain=elm-chan.org)
+//available at elm-chan.org
 
 //This file provides the FatFs driver functions and SPI code required to manage
 //an SPI-connected MMC or compatible SD card with FAT
@@ -26,8 +25,12 @@
 
 #include "main.h" /* Provide the low-level HAL functions */
 #include "user_diskio_spi.h"
+#include "ff_gen_drv.h"
+extern Disk_drvTypeDef disk;
 
 extern SPI_HandleTypeDef hspi1;
+// [Claude] added: see the re-init call in USER_SPI_initialize() below for why.
+extern void MX_SPI1_Init(void);
 
 #define SD_SPI_HANDLE hspi1
 //Make sure you set #define SD_SPI_HANDLE as some hspix in main.h
@@ -39,11 +42,19 @@ extern SPI_HandleTypeDef hspi1;
 
 //(Note that the _256 is used as a mask to clear the prescalar bits as it provides binary 111 in the correct position)
 #define FCLK_SLOW() { \
-    MODIFY_REG(SD_SPI_HANDLE.Instance->CR1, \
-               SPI_BAUDRATEPRESCALER_256, \
-               SPI_BAUDRATEPRESCALER_256); \
+		MODIFY_REG(SD_SPI_HANDLE.Instance->CR1, \
+				SPI_BAUDRATEPRESCALER_256, \
+				SPI_BAUDRATEPRESCALER_256); \
 }
-#define FCLK_FAST() { MODIFY_REG(SD_SPI_HANDLE.Instance->CR1, SPI_BAUDRATEPRESCALER_256, SPI_BAUDRATEPRESCALER_8); }	/* Set SCLK = fast, approx 4.5 MBits/s */
+// [Claude] changed: was SPI_BAUDRATEPRESCALER_8 (~4.5 MBit/s). A6.1 fault-recovery testing
+// showed mount() reliably completing the CMD0/ACMD41 handshake (short exchanges) but failing
+// the very next step -- reading sector 0, a full 512-byte block transfer -- with FR_DISK_ERR
+// every time, regardless of physical reseating. Short commands tolerating noise that a longer
+// sustained transfer doesn't is the signature of a marginal SPI connection (this rig has had
+// two unrelated loose-connector issues already today), and 4.5 MBit/s over breadboard jumpers
+// is a known-fast clock for that. Dropping 4x to ~1.1 MBit/s trades throughput for reliability
+// as a first test before re-checking the physical MOSI/MISO/SCK/CS wiring.
+#define FCLK_FAST() { MODIFY_REG(SD_SPI_HANDLE.Instance->CR1, SPI_BAUDRATEPRESCALER_256, SPI_BAUDRATEPRESCALER_32); }	/* Set SCLK = fast, approx 1.1 MBits/s (was 4.5) */
 
 #define CS_HIGH()	{HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_SET);}
 #define CS_LOW()	{HAL_GPIO_WritePin(SD_CS_GPIO_Port, SD_CS_Pin, GPIO_PIN_RESET);}
@@ -93,22 +104,36 @@ BYTE CardType;			/* Card type flags */
 volatile uint32_t g_sd_spi_error_count = 0;
 volatile HAL_StatusTypeDef g_sd_last_hal_status = HAL_OK;
 
-volatile BYTE g_sd_cmd0_response  = 0xFF;
-volatile BYTE g_sd_cmd8_response  = 0xFF;
-volatile BYTE g_sd_acmd41_response = 0xFF;
-volatile BYTE g_sd_cmd58_response = 0xFF;
-volatile BYTE g_sd_ocr[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+volatile BYTE  g_sd_last_token = 0xEE;      /* last data-start token seen (0xEE = never set) */
+volatile BYTE  g_sd_last_r1_cmd17 = 0xEE;   /* last R1 response to READ_SINGLE_BLOCK */
+volatile uint32_t g_sd_read_fail_count = 0; /* rcvr_datablock failures */
+
+/* [Claude] added: full driver-boundary instrumentation for the A6.1 stuck-in-Fault
+ * investigation. Counts every entry/failure of each public driver function plus the
+ * identity of the last failing operation, so a debugger snapshot alone can pin which
+ * operation FatFs's FR_DISK_ERR is actually coming from. */
+volatile uint32_t g_init_calls = 0, g_init_ok = 0;
+volatile uint32_t g_read_calls = 0, g_read_errs = 0;
+volatile uint32_t g_write_calls = 0, g_write_errs = 0;
+volatile DWORD    g_last_fail_sector = 0xFFFFFFFF;
+volatile BYTE     g_last_fail_op = 0;   /* 'R' read, 'W' write, 'I' init */
 
 uint32_t spiTimerTickStart;
 uint32_t spiTimerTickDelay;
 
+static void mark_uninitialized(void)
+{
+	Stat = STA_NOINIT;
+	disk.is_initialized[0] = 0;
+}
+
 void SPI_Timer_On(uint32_t waitTicks) {
-    spiTimerTickStart = HAL_GetTick();
-    spiTimerTickDelay = waitTicks;
+	spiTimerTickStart = HAL_GetTick();
+	spiTimerTickDelay = waitTicks;
 }
 
 uint8_t SPI_Timer_Status() {
-    return ((HAL_GetTick() - spiTimerTickStart) < spiTimerTickDelay);
+	return ((HAL_GetTick() - spiTimerTickStart) < spiTimerTickDelay);
 }
 
 /*-----------------------------------------------------------------------*/
@@ -118,32 +143,32 @@ uint8_t SPI_Timer_Status() {
 /* Exchange a byte */
 static BYTE xchg_spi(BYTE tx)
 {
-    BYTE rx = 0xFF;
+	BYTE rx = 0xFF;
 
-    HAL_StatusTypeDef status =
-        HAL_SPI_TransmitReceive(
-            &SD_SPI_HANDLE,
-            &tx,
-            &rx,
-            1,
-            50);
+	HAL_StatusTypeDef status =
+			HAL_SPI_TransmitReceive(
+					&SD_SPI_HANDLE,
+					&tx,
+					&rx,
+					1,
+					50);
 
-    g_sd_last_hal_status = status;
+	g_sd_last_hal_status = status;
 
-    if (status != HAL_OK) {
-        ++g_sd_spi_error_count;
-        return 0xFF;
-    }
+	if (status != HAL_OK) {
+		++g_sd_spi_error_count;
+		return 0xFF;
+	}
 
-    return rx;
+	return rx;
 }
 
 
 /* Receive multiple byte */
 static
 void rcvr_spi_multi (
-	BYTE *buff,		/* Pointer to data buffer */
-	UINT btr		/* Number of bytes to receive (even number) */
+		BYTE *buff,		/* Pointer to data buffer */
+		UINT btr		/* Number of bytes to receive (even number) */
 )
 {
 	for(UINT i=0; i<btr; i++) {
@@ -156,8 +181,8 @@ void rcvr_spi_multi (
 /* Send multiple byte */
 static
 void xmit_spi_multi (
-	const BYTE *buff,	/* Pointer to the data */
-	UINT btx			/* Number of bytes to send (even number) */
+		const BYTE *buff,	/* Pointer to the data */
+		UINT btx			/* Number of bytes to send (even number) */
 )
 {
 	for(UINT i=0; i<btx; i++) {
@@ -173,7 +198,7 @@ void xmit_spi_multi (
 
 static
 int wait_ready (	/* 1:Ready, 0:Timeout */
-	UINT wt			/* Timeout [ms] */
+		UINT wt			/* Timeout [ms] */
 )
 {
 	BYTE d;
@@ -231,19 +256,33 @@ int spiselect (void)	/* 1:OK, 0:Timeout */
 
 static
 int rcvr_datablock (	/* 1:OK, 0:Error */
-	BYTE *buff,			/* Data buffer */
-	UINT btr			/* Data block length (byte) */
+		BYTE *buff,			/* Data buffer */
+		UINT btr			/* Data block length (byte) */
 )
 {
 	BYTE token;
 
 
-	SPI_Timer_On(200);
-	do {							/* Wait for DataStart token in timeout of 200ms */
+	// [Claude] changed: was 200ms. A6.1 fault-recovery testing showed mount() reliably passing
+	// CMD0/CMD8/ACMD41/CMD58 (short exchanges) after a card was interrupted mid-write, but
+	// consistently failing this data-start-token wait when reading sector 0 -- even at a
+	// slower SPI clock, which ruled out signal noise. The remaining theory: right after an
+	// interrupted write, the card's controller may need longer than 200ms of internal recovery
+	// before it can actually serve a data block, even though it still acks simple commands
+	// almost immediately. 1500ms gives it real room without hanging the retry loop for long
+	// (this call happens at most once every kFaultRemountRetryMs during a real Fault).
+	SPI_Timer_On(1500);
+	do {							/* Wait for DataStart token in timeout of 1500ms */
 		token = xchg_spi(0xFF);
 		/* This loop will take a time. Insert rot_rdq() here for multitask envilonment. */
 	} while ((token == 0xFF) && SPI_Timer_Status());
-	if(token != 0xFE) return 0;		/* Function fails if invalid DataStart token or timeout */
+
+	g_sd_last_token = token;
+
+	if(token != 0xFE) {
+		++g_sd_read_fail_count;
+		return 0;
+	}		/* Function fails if invalid DataStart token or timeout */
 
 	rcvr_spi_multi(buff, btr);		/* Store trailing data to the buffer */
 	xchg_spi(0xFF); xchg_spi(0xFF);			/* Discard CRC */
@@ -260,8 +299,8 @@ int rcvr_datablock (	/* 1:OK, 0:Error */
 #if _USE_WRITE
 static
 int xmit_datablock (	/* 1:OK, 0:Failed */
-	const BYTE *buff,	/* Ponter to 512 byte data to be sent */
-	BYTE token			/* Token */
+		const BYTE *buff,	/* Ponter to 512 byte data to be sent */
+		BYTE token			/* Token */
 )
 {
 	BYTE resp;
@@ -288,8 +327,8 @@ int xmit_datablock (	/* 1:OK, 0:Failed */
 
 static
 BYTE send_cmd (		/* Return value: R1 resp (bit7==1:Failed to send) */
-	BYTE cmd,		/* Command index */
-	DWORD arg		/* Argument */
+		BYTE cmd,		/* Command index */
+		DWORD arg		/* Argument */
 )
 {
 	BYTE n, res;
@@ -347,15 +386,29 @@ BYTE send_cmd (		/* Return value: R1 resp (bit7==1:Failed to send) */
 /*-----------------------------------------------------------------------*/
 
 inline DSTATUS USER_SPI_initialize (
-	BYTE drv		/* Physical drive number (0) */
+		BYTE drv		/* Physical drive number (0) */
 )
 {
+	++g_init_calls;
+
 	BYTE n, cmd, ty, ocr[4];
 
 	if (drv != 0) return STA_NOINIT;		/* Supports only drive 0 */
 	//assume SPI already init init_spi();	/* Initialize SPI */
 
 	if (Stat & STA_NODISK) return Stat;	/* Is card existing in the soket? */
+
+	// [Claude] added: A6.1 fault-recovery investigation. After a card is interrupted
+	// mid-write, a full MCU reset always let mount() succeed again, but repeated calls to
+	// this function alone -- from the same running session, with the card reseated, at a
+	// slower clock, and with a longer data-read timeout -- never did. That combination
+	// points at the STM32's own SPI1 peripheral being left in a bad internal state by the
+	// interrupted transfer, not the card or the wiring. A full reset fixes it by re-running
+	// MX_SPI1_Init() from scratch; nothing on this call path previously did that. Re-running
+	// it here applies to every init attempt (boot and remount alike) and is harmless on an
+	// already-healthy peripheral.
+	HAL_SPI_DeInit(&SD_SPI_HANDLE);
+	MX_SPI1_Init();
 
 	FCLK_SLOW();
 	for (n = 10; n; n--) xchg_spi(0xFF);	/* Send 80 dummy clocks */
@@ -387,10 +440,12 @@ inline DSTATUS USER_SPI_initialize (
 	despiselect();
 
 	if (ty) {			/* OK */
+		++g_init_ok;
 		FCLK_FAST();			/* Set fast clock */
 		Stat &= ~STA_NOINIT;	/* Clear STA_NOINIT flag */
 	} else {			/* Failed */
-		Stat = STA_NOINIT;
+		g_last_fail_op = 'I';
+		mark_uninitialized();
 	}
 
 	return Stat;
@@ -403,7 +458,7 @@ inline DSTATUS USER_SPI_initialize (
 /*-----------------------------------------------------------------------*/
 
 inline DSTATUS USER_SPI_status (
-	BYTE drv		/* Physical drive number (0) */
+		BYTE drv		/* Physical drive number (0) */
 )
 {
 	if (drv) return STA_NOINIT;		/* Supports only drive 0 */
@@ -418,23 +473,28 @@ inline DSTATUS USER_SPI_status (
 /*-----------------------------------------------------------------------*/
 
 inline DRESULT USER_SPI_read (
-	BYTE drv,		/* Physical drive number (0) */
-	BYTE *buff,		/* Pointer to the data buffer to store read data */
-	DWORD sector,	/* Start sector number (LBA) */
-	UINT count		/* Number of sectors to read (1..128) */
+		BYTE drv,		/* Physical drive number (0) */
+		BYTE *buff,		/* Pointer to the data buffer to store read data */
+		DWORD sector,	/* Start sector number (LBA) */
+		UINT count		/* Number of sectors to read (1..128) */
 )
 {
 	if (drv || !count) return RES_PARERR;		/* Check parameter */
 	if (Stat & STA_NOINIT) return RES_NOTRDY;	/* Check if drive is ready */
 
+	++g_read_calls;
+
 	if (!(CardType & CT_BLOCK)) sector *= 512;	/* LBA ot BA conversion (byte addressing cards) */
 
 	if (count == 1) {	/* Single sector read */
-		if ((send_cmd(CMD17, sector) == 0)	/* READ_SINGLE_BLOCK */
-			&& rcvr_datablock(buff, 512)) {
+		BYTE r1 = send_cmd(CMD17, sector);
+		g_sd_last_r1_cmd17 = r1;
+
+		if ((r1 == 0) && rcvr_datablock(buff, 512)) {
 			count = 0;
 		}
 	}
+
 	else {				/* Multiple sector read */
 		if (send_cmd(CMD18, sector) == 0) {	/* READ_MULTIPLE_BLOCK */
 			do {
@@ -446,7 +506,14 @@ inline DRESULT USER_SPI_read (
 	}
 	despiselect();
 
-	return count ? RES_ERROR : RES_OK;	/* Return result */
+	if (count) {                 /* something failed */
+		++g_read_errs;
+		g_last_fail_op = 'R';
+		g_last_fail_sector = sector;
+		mark_uninitialized();        /* force re-init on next mount */
+		return RES_ERROR;
+	}
+	return RES_OK;
 }
 
 
@@ -457,21 +524,23 @@ inline DRESULT USER_SPI_read (
 
 #if _USE_WRITE
 inline DRESULT USER_SPI_write (
-	BYTE drv,			/* Physical drive number (0) */
-	const BYTE *buff,	/* Ponter to the data to write */
-	DWORD sector,		/* Start sector number (LBA) */
-	UINT count			/* Number of sectors to write (1..128) */
+		BYTE drv,			/* Physical drive number (0) */
+		const BYTE *buff,	/* Ponter to the data to write */
+		DWORD sector,		/* Start sector number (LBA) */
+		UINT count			/* Number of sectors to write (1..128) */
 )
 {
 	if (drv || !count) return RES_PARERR;		/* Check parameter */
 	if (Stat & STA_NOINIT) return RES_NOTRDY;	/* Check drive status */
 	if (Stat & STA_PROTECT) return RES_WRPRT;	/* Check write protect */
 
+	++g_write_calls;
+
 	if (!(CardType & CT_BLOCK)) sector *= 512;	/* LBA ==> BA conversion (byte addressing cards) */
 
 	if (count == 1) {	/* Single sector write */
 		if ((send_cmd(CMD24, sector) == 0)	/* WRITE_BLOCK */
-			&& xmit_datablock(buff, 0xFE)) {
+				&& xmit_datablock(buff, 0xFE)) {
 			count = 0;
 		}
 	}
@@ -487,7 +556,14 @@ inline DRESULT USER_SPI_write (
 	}
 	despiselect();
 
-	return count ? RES_ERROR : RES_OK;	/* Return result */
+	if (count) {                 /* something failed */
+		++g_write_errs;
+		g_last_fail_op = 'W';
+		g_last_fail_sector = sector;
+		mark_uninitialized();        /* force re-init on next mount */
+		return RES_ERROR;
+	}
+	return RES_OK;
 }
 #endif
 
@@ -498,9 +574,9 @@ inline DRESULT USER_SPI_write (
 
 #if _USE_IOCTL
 inline DRESULT USER_SPI_ioctl (
-	BYTE drv,		/* Physical drive number (0) */
-	BYTE cmd,		/* Control command code */
-	void *buff		/* Pointer to the conrtol data */
+		BYTE drv,		/* Physical drive number (0) */
+		BYTE cmd,		/* Control command code */
+		void *buff		/* Pointer to the conrtol data */
 )
 {
 	DRESULT res;
@@ -578,13 +654,13 @@ inline DRESULT USER_SPI_ioctl (
 #endif
 
 Diskio_drvTypeDef USER_SPI_Driver = {
-    USER_SPI_initialize,
-    USER_SPI_status,
-    USER_SPI_read,
+		USER_SPI_initialize,
+		USER_SPI_status,
+		USER_SPI_read,
 #if _USE_WRITE == 1
-    USER_SPI_write,
+		USER_SPI_write,
 #endif
 #if _USE_IOCTL == 1
-    USER_SPI_ioctl,
+		USER_SPI_ioctl,
 #endif
 };

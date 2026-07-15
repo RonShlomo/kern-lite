@@ -22,14 +22,32 @@ from .commands import CommandSender
 from .frame import Frame, FrameType, NackCode
 
 
+FRESULT_NAMES = {
+    0: "FR_OK", 1: "FR_DISK_ERR", 2: "FR_INT_ERR", 3: "FR_NOT_READY",
+    4: "FR_NO_FILE", 5: "FR_NO_PATH", 6: "FR_INVALID_NAME", 7: "FR_DENIED",
+    8: "FR_EXIST", 9: "FR_INVALID_OBJECT", 10: "FR_WRITE_PROTECTED",
+    11: "FR_INVALID_DRIVE", 12: "FR_NOT_ENABLED", 13: "FR_NO_FILESYSTEM",
+    14: "FR_MKFS_ABORTED", 15: "FR_TIMEOUT", 16: "FR_LOCKED",
+    17: "FR_NOT_ENOUGH_CORE", 18: "FR_TOO_MANY_OPEN_FILES", 19: "FR_INVALID_PARAMETER",
+}
+
+
 def describe_status(f: Frame) -> str:
     p = f.payload
     state, sd, fc, cf = p[0], p[1], p[2], p[3]
     total, wraps = struct.unpack_from("<II", p, 4)
     rif = struct.unpack_from("<H", p, 12)[0]
     names = {0: "Idle", 1: "Recording", 2: "Fault"}
-    return (f"STATUS state={state}({names.get(state,'?')}) sd={sd} files={fc} "
+    base = (f"STATUS state={state}({names.get(state,'?')}) sd={sd} files={fc} "
             f"current_file={cf} total={total} wraps={wraps} records_in_file={rif}")
+    # [Claude] added: A6.1 fault-recovery diagnosis fields (firmware/recorder/command_handler.cpp),
+    # only present on firmware that sends the 16-byte STATUS payload.
+    if len(p) >= 16:
+        fresult = p[14]
+        attempts = p[15]
+        base += (f" last_mount_fresult={fresult}({FRESULT_NAMES.get(fresult, '?')}) "
+                 f"mount_attempts={attempts}")
+    return base
 
 
 def listen(link: SerialLink, seconds: float) -> None:
