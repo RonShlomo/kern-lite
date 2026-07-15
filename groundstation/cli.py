@@ -40,13 +40,7 @@ def describe_status(f: Frame) -> str:
     names = {0: "Idle", 1: "Recording", 2: "Fault"}
     base = (f"STATUS state={state}({names.get(state,'?')}) sd={sd} files={fc} "
             f"current_file={cf} total={total} wraps={wraps} records_in_file={rif}")
-    # [Claude] added: A6.1 fault-recovery diagnosis fields (firmware/recorder/command_handler.cpp),
-    # only present on firmware that sends the 16-byte STATUS payload.
-    if len(p) >= 16:
-        fresult = p[14]
-        attempts = p[15]
-        base += (f" last_mount_fresult={fresult}({FRESULT_NAMES.get(fresult, '?')}) "
-                 f"mount_attempts={attempts}")
+
     return base
 
 

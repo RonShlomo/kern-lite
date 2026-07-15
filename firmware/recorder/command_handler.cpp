@@ -49,7 +49,7 @@ void CommandHandler::sendStatus()
 
     protocol::Frame out{};
     out.type = protocol::FrameType::Status;
-    out.len = 16;
+    out.len = 14;
 
     // [Claude] changed: was 5 separate unlocked getter calls (totalRecords()/wrapCount()/
     // writeIndex()/isMounted()/currentFile()), each reading m_meta independently. If the
@@ -92,13 +92,9 @@ void CommandHandler::sendStatus()
     out.payload[12] = static_cast<uint8_t>(writeIndex);
     out.payload[13] = static_cast<uint8_t>(writeIndex >> 8);
 
-    // [Claude] added: A6.1 fault-recovery diagnosis fields, not covered by the snapshot()
-    // consistency guarantee above (these two are about mount() itself, not m_meta) --
-    // see CircularLog::mountAttempts()/lastMountFResult() for why.
-    // [14] last f_mount() FRESULT (0 = FR_OK)
-    out.payload[14] = m_circularLog->lastMountFResult();
-    // [15] mount attempt count (wraps at 256, just needs to visibly increment)
-    out.payload[15] = static_cast<uint8_t>(m_circularLog->mountAttempts());
+
+    // out.payload[14] = m_circularLog->lastMountFResult();
+    // out.payload[15] = static_cast<uint8_t>(m_circularLog->mountAttempts());
 
     m_link->send(out);
 }

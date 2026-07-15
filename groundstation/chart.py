@@ -99,7 +99,7 @@ class RollingChart:
         in_window = {rec.seq for rec in self.records}
         self.markers = [m for m in self.markers if m.seq in in_window]
 
-    def _unwrapped_x(self) -> List[int]:
+    def _unwrapped_x(self, records) -> List[int]:
         """
         Monotonic plotting positions from a uint16 seq.
         Like a car odometer rolling 99999 -> 00000: distance kept
@@ -110,7 +110,7 @@ class RollingChart:
         xs: List[int] = []
         prev_raw = None
         x = 0
-        for rec in self.records:
+        for rec in records:
             if prev_raw is None:
                 x = rec.seq
             else:
@@ -119,17 +119,18 @@ class RollingChart:
             xs.append(x)
         return xs
 
-    def channel_arrays(self, name: str) -> Optional[Dict[str, Any]]:
+    def channel_arrays(self, name: str, records=None) -> Optional[Dict[str, Any]]:
         """
         B6.1: 'Expose per-channel arrays for plotting: raw values,
         alert-shading booleans, threshold lo/hi lines.'
         Returns {'seq', 'values', 'alert', 'lo', 'hi'} or None.
         """
-        if name not in self.channels or not self.records:
+        recs = list(self.records) if records is None else records
+        if name not in self.channels or not recs:
             return None
         attribute, alert_bit, _color = self.channels[name]
         seqs, values, alerts = [], [], []
-        for rec in self.records:
+        for rec in recs:
             seqs.append(rec.seq)
             values.append(getattr(rec, attribute))
             alerts.append(bool(rec.alert_bits & alert_bit))
@@ -150,12 +151,13 @@ class RollingChart:
         if thresholds_dict is not None: # optional override
             self.set_thresholds(thresholds_dict)
 
-        xs = self._unwrapped_x()
+        snapshot = list(self.records)
+        xs = self._unwrapped_x(snapshot)
         seq_to_x = {rec.seq: x for rec, x in zip(self.records, xs)}
         visible = [m for m in self.markers if m.seq in seq_to_x]
 
         for name, ax in ax_dict.items():
-            data = self.channel_arrays(name)
+            data = self.channel_arrays(name, snapshot)
             if data is None:
                 continue
 
@@ -198,4 +200,5 @@ class RollingChart:
             ax.legend(unique.values(), unique.keys(),
                       loc='upper right', fontsize=8)
             ax.set_ylabel(name)
-            ax.set_xlim(xs[0], xs[-1])
+            if xs[0] != xs[-1]:
+                ax.set_xlim(xs[0], xs[-1])
