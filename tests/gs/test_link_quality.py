@@ -1,5 +1,12 @@
+# how to run: "python -m pytest test_link_quality.py -v"
+
 import pytest
 import logging
+import sys
+import os
+
+# Add root folder to path so Python finds 'groundstation'
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from groundstation.commands import StatusPoller
 from groundstation.link_quality import LinkQualityMonitor

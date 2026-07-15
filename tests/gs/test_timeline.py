@@ -1,4 +1,12 @@
+# how to run: "python -m pytest test_timeline.py -v"
+
 import pytest
+
+import sys
+import os
+
+# Add root folder to path so Python finds 'groundstation'
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from groundstation.timeline import StateTimeline
 
@@ -38,24 +46,24 @@ def test_two_recording_bands_have_correct_duration():
     recording_segments = [
         segment
         for segment in timeline.segments
-        if segment["state"] == "Recording"
+        if segment.state == "Recording"
     ]
 
     assert len(recording_segments) == 2
 
-    assert recording_segments[0]["start_wall"] == pytest.approx(0.0)
-    assert recording_segments[0]["end_wall"] == pytest.approx(30.0)
-    assert recording_segments[0]["duration_s"] == pytest.approx(30.0)
-    assert recording_segments[0]["start_seq"] == 0
-    assert recording_segments[0]["end_seq"] == 300
-    assert recording_segments[0]["record_count"] == 300
+    assert recording_segments[0].start_wall == pytest.approx(0.0)
+    assert recording_segments[0].end_wall == pytest.approx(30.0)
+    assert recording_segments[0].duration_s == pytest.approx(30.0)
+    assert recording_segments[0].start_seq == 0
+    assert recording_segments[0].end_seq == 300
+    assert recording_segments[0].record_count == 300
 
-    assert recording_segments[1]["start_wall"] == pytest.approx(60.0)
-    assert recording_segments[1]["end_wall"] == pytest.approx(90.0)
-    assert recording_segments[1]["duration_s"] == pytest.approx(30.0)
-    assert recording_segments[1]["start_seq"] == 300
-    assert recording_segments[1]["end_seq"] == 600
-    assert recording_segments[1]["record_count"] == 300
+    assert recording_segments[1].start_wall == pytest.approx(60.0)
+    assert recording_segments[1].end_wall == pytest.approx(90.0)
+    assert recording_segments[1].duration_s == pytest.approx(30.0)
+    assert recording_segments[1].start_seq == 300
+    assert recording_segments[1].end_seq == 600
+    assert recording_segments[1].record_count == 300
 
 
 def test_timeline_export_contains_recording_bands_and_reboot(tmp_path):
