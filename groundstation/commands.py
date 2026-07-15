@@ -83,7 +83,7 @@ class StatusPoller:
         """
 
         # if it's the first time receiving a status just save it and move on
-        if self.last_total_records is Nona:
+        if self.last_total_records is None:
             self.last_total_records = current_total_records
             return
 

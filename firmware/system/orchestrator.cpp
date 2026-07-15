@@ -54,6 +54,7 @@ namespace kern::system {
 			// fresh every time Recording starts so a long Idle period beforehand can't leave a
 			// stale reference that forces a burst of non-delaying catch-up iterations.
 			TickType_t lastWake = xTaskGetTickCount();
+
 			// [Claude] added: clear any fault_bits left over from a previous Recording session
 			// (or from before the first record of this one is computed below), so the LED can't
 			// briefly show a blink for a fault that's no longer real.
@@ -108,21 +109,18 @@ namespace kern::system {
 
 				vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(100));
 			}
+
 		}
 	}
 
 	void Orchestrator::runStorageTask()
 	{
+
 		uint8_t consecutiveWriteFailures = 0;
+		storage::SensorRecord pendingRecord{};
+		bool hasPendingRecord = false;
 
 		for (;;) {
-			// [Claude] added: A6.1 hardening -- entering Fault on the 3rd consecutive write
-			// failure was already wired up, but Event::FaultCleared (Fault -> Recording in
-			// state_machine.cpp) had no caller anywhere, so a Fault was permanent even after the
-			// SD card came back. This task owns all SD access, so it's the one that re-probes by
-			// calling mount() again; a successful remount fires FaultCleared and resumes
-			// Recording with the same m_recSeq sequence (a gap during the fault window, not a
-			// reset -- consistent with how a reboot gap is already handled).
 			if (sm.isFault()) {
 				if (box.mount() == storage::StorageStatus::Ok) {
 					sm.process(recorder::Event::FaultCleared);
@@ -133,43 +131,33 @@ namespace kern::system {
 				continue;
 			}
 
-			// only writes on recording
-			if (!sm.isLogging()) {
+			if (!hasPendingRecord) {
+				if (!bus.receive(pendingRecord, pdMS_TO_TICKS(100))) {
+					continue;
+				}
+
+				hasPendingRecord = true;
+				m_storageBusy.store(true);
+			}
+
+			const storage::StorageStatus status =
+					box.writeRecord(pendingRecord);
+
+			if (status == storage::StorageStatus::Ok) {
+				hasPendingRecord = false;
+				m_storageBusy.store(false);
 				consecutiveWriteFailures = 0;
-				vTaskDelay(pdMS_TO_TICKS(100));
 				continue;
 			}
 
-			// [Claude] changed: vTaskDelayUntil keeps this loop on a fixed absolute grid instead
-			// of drifting by however long the previous writeRecord() (which calls f_sync()) took.
-			// That alone isn't enough to stop record loss, though: a single write that overruns
-			// one 100ms period still lets the Sensor task get ahead. SensorBus is now a small FIFO
-			// (see sensor_bus.hpp) rather than a single overwritten slot, so the drain loop below
-			// catches up on whatever queued up during that overrun instead of losing it.
-			TickType_t lastWake = xTaskGetTickCount();
+			++consecutiveWriteFailures;
 
-			while (sm.isLogging()) {
-				// [Claude] changed: drain every record SensorBus is holding, not just one, each
-				// tick. seq == 0 is the "queue empty" sentinel (real records start at seq 1). Also
-				// re-checks isLogging() each pass so a mid-drain SdFault (3rd consecutive failure)
-				// stops further write attempts immediately, same as before.
-				for (storage::SensorRecord rec = bus.latest(); rec.seq != 0 && sm.isLogging(); rec = bus.latest()) {
-					const storage::StorageStatus status = box.writeRecord(rec);
-
-					if (status == storage::StorageStatus::Ok) {
-						consecutiveWriteFailures = 0;
-					} else {
-						++consecutiveWriteFailures;
-
-						if (consecutiveWriteFailures >= 3) {
-							sm.process(recorder::Event::SdFault);
-							consecutiveWriteFailures = 0;
-						}
-					}
-				}
-
-				vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(100));
+			if (consecutiveWriteFailures >= 3) {
+				sm.process(recorder::Event::SdFault);
+				consecutiveWriteFailures = 0;
 			}
+
+			vTaskDelay(pdMS_TO_TICKS(100));
 		}
 	}
 
