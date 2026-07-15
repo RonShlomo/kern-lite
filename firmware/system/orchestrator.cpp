@@ -82,23 +82,19 @@ namespace kern::system {
 				);
 
 				// the record is now complete and verified. now we distribute this record to downstream consumers
-				// SensorBus: Internal RTOS bus (for the Storage Task to save to SD card).
+				// SensorBus: Internal RTOS bus/queue (for the Storage Task to save to SD card).
 				// CommLink: External UART connection (for the Ground Station GUI).
-				bus.publish(rec); // Uncomment when Storage Task is ready
+				bus.publish(rec);
 
 				transmitRecord(rec);
 
 				// [Claude] changed: the DHT11 poll used to run inside processDigitalSensors()
 				// above, before bus.publish(). Dht11::read() blocks for ~18-25ms (its mandatory
 				// 18ms start pulse plus the bit-banged response), so on that one tick in twenty
-				// this record's publish into SensorBus's single slot landed ~20ms late. If the
-				// Storage task's independent, fixed-schedule read for that same window happened
-				// before the delayed publish, it saw the previous record and correctly skipped
-				// it -- but by its next read, this record had already been overwritten by the
-				// following one, permanently dropping it from storage. That's exactly the
-				// ~1-in-20 pattern (seq 240/260/280/300, etc.) the Phase 5 integration test kept
-				// reproducing. Running the poll here, after this record is already published and
-				// transmitted, removes that blocking call from the critical path.
+				// this record's publish landed ~20ms late. Running the poll here, after this
+				// record is already published and transmitted, removes that blocking call from
+				// the critical path -- and SensorBus queuing (see sensor_bus.hpp) means even a
+				// late publish no longer risks overwriting a record Storage hasn't read yet.
 				pollDht11();
 
 				vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(100));
@@ -108,7 +104,6 @@ namespace kern::system {
 
 	void Orchestrator::runStorageTask()
 	{
-		uint16_t lastWrittenSeq = 0;
 		uint8_t consecutiveWriteFailures = 0;
 
 		for (;;) {
@@ -119,23 +114,23 @@ namespace kern::system {
 				continue;
 			}
 
-			// [Claude] added: same fix as runSensorTask() -- writeRecord() calls f_sync(), whose
-			// latency isn't fixed, so vTaskDelay's relative wait let this task's real period creep
-			// past the Sensor task's 100ms cadence. Once that drift exceeded one Sensor period,
-			// the Sensor task would publish a second record into SensorBus's single slot before
-			// this task read the first one, silently overwriting it -- the record loss the Phase 5
-			// integration test caught (live stream had zero gaps, but ~48 of 288 records never
-			// reached storage). vTaskDelayUntil keeps this loop on a fixed absolute grid so write
-			// latency no longer accumulates into the next wait.
+			// [Claude] changed: vTaskDelayUntil keeps this loop on a fixed absolute grid instead
+			// of drifting by however long the previous writeRecord() (which calls f_sync()) took.
+			// That alone isn't enough to stop record loss, though: a single write that overruns
+			// one 100ms period still lets the Sensor task get ahead. SensorBus is now a small FIFO
+			// (see sensor_bus.hpp) rather than a single overwritten slot, so the drain loop below
+			// catches up on whatever queued up during that overrun instead of losing it.
 			TickType_t lastWake = xTaskGetTickCount();
 
 			while (sm.isLogging()) {
-				storage::SensorRecord copy = bus.latest();
-				if (lastWrittenSeq != copy.seq) {
-					const storage::StorageStatus status = box.writeRecord(copy);
+				// [Claude] changed: drain every record SensorBus is holding, not just one, each
+				// tick. seq == 0 is the "queue empty" sentinel (real records start at seq 1). Also
+				// re-checks isLogging() each pass so a mid-drain SdFault (3rd consecutive failure)
+				// stops further write attempts immediately, same as before.
+				for (storage::SensorRecord rec = bus.latest(); rec.seq != 0 && sm.isLogging(); rec = bus.latest()) {
+					const storage::StorageStatus status = box.writeRecord(rec);
 
 					if (status == storage::StorageStatus::Ok) {
-						lastWrittenSeq = copy.seq;
 						consecutiveWriteFailures = 0;
 					} else {
 						++consecutiveWriteFailures;
@@ -146,6 +141,7 @@ namespace kern::system {
 						}
 					}
 				}
+
 				vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(100));
 			}
 		}
